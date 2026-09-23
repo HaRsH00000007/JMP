@@ -44,25 +44,27 @@ Without Docker (single process, SQLite, no Redis) — see [docs/setup.md](docs/s
 Defaults run in demo mode: no API keys needed, mock route data, and every PDF watermarked
 *DEMO — NOT FOR OPERATIONAL USE*.
 
-## Supplying the source files
+## Source files
 
-Two inputs are **not in this repository** because they are client documents (the master plan is marked
-Confidential):
+The 25-hazard workbook **is** included, so a clone runs out of the box:
 
-| Put here | What it is |
+| File | Status |
 |---|---|
-| `source/JMP Template- 25 Hazards.xlsx` | The 25-hazard library. **Required** — the app refuses to start generating without it |
-| `source/Danone_JMP_…pdf` | The master visual reference. Optional; only used as the design source |
+| `source/JMP Template- 25 Hazards.xlsx` | Committed — the authoritative hazard library |
+| `source/risk_matrix_extracted.png` | Committed — the risk matrix, extracted from that workbook |
+| The master JMP PDF | **Not committed.** It is marked Confidential; it was only the design reference |
 
-Then load the library (idempotent; the API container does this automatically):
+Load the library (idempotent; the API container does this on start):
 
 ```bash
 python -m app.cli.ingest_hazards
 ```
 
 Ingestion stores every value verbatim and refuses a workbook whose RPN codes, severities or risk-matrix
-image don't match what was reviewed. Real journey data (`data/`) is likewise excluded — it contains
-employee names, e-mail addresses and home addresses.
+image don't match what was reviewed.
+
+Real journey submissions (`data/`) are **not** committed — they contain employee names, e-mail addresses
+and home addresses.
 
 ## Configuration that matters
 

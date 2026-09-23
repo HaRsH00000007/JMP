@@ -8,12 +8,14 @@
 # ---------------------------------------------------------------------------------------------
 # Client data — this repository is public.
 #
-# source/  Danone's supplied documents (the master JMP PDF is marked "Confidential", plus the
-#          25-hazard workbook). Supply these at deploy time; see README "Supplying the source files".
 # data/    Real journey submissions: employee names, e-mail addresses and home addresses.
+# source/  The 25-hazard workbook is committed (the app needs it to run); the master JMP PDF is NOT —
+#          its footer reads "Confidential".
 # ---------------------------------------------------------------------------------------------
-source/
 data/
+source/*
+!source/JMP Template- 25 Hazards.xlsx
+!source/risk_matrix_extracted.png
 
 # ---------------------------------------------------------------------------------------------
 # Generated output — contains the same personal data as the inputs
