@@ -1,0 +1,39 @@
+{% import "partials/components.j2" as c %}
+<section class="page" data-page="4">
+{{ c.demo_marks(r) }}
+{{ c.section_bar('ALTERNATIVE ROUTE ANALYSIS & ROUTE DECISION', 4) }}
+<div class="alts">
+{% for slot in ['A', 'B'] %}
+  {% set matches = r.alternatives | selectattr('alt.id', 'equalto', slot) | list %}
+  {% if matches %}{% set row = matches[0] %}
+  <div class="alt">
+    <h3>ALTERNATIVE {{ slot }} — {{ row.alt.leg_label }}</h3>
+    <div class="fig"><div class="mh">ALTERNATIVE {{ slot }} — {{ (row.alt.via | join(', ')) or 'provider alternative' }}</div>{{ svg.alts[slot] }}</div>
+    <dl>
+      <dt>Route: </dt><dd>{{ row.alt.leg_label }}{% if row.alt.via %} via {{ row.alt.via | join(', ') }}{% endif %}</dd>
+      <dt>Distance/Time: </dt><dd>{{ '%+.1f' % row.alt.delta_km }} km · {{ '%+.0f' % row.alt.delta_min }} min vs primary</dd>
+      <dt>Advantage: </dt><dd>{{ row.advantage }}</dd>
+      <dt>Limitation: </dt><dd>{{ row.limitation }}</dd>
+      <dt>Use when: </dt><dd>{{ row.use_when }}</dd>
+    </dl>
+  </div>
+  {% else %}
+  <div class="alt none"><h3 style="font-style:normal">ALTERNATIVE {{ slot }}</h3>No viable alternative was returned by the routing provider for this journey — verify locally with live navigation if a diversion is needed.</div>
+  {% endif %}
+{% endfor %}
+</div>
+
+{{ c.h2('ROUTE COMPARISON') }}
+<table class="t">
+  <tr><th style="width:20%">Parameter</th><th>Primary Route</th>{% for a in r.alternatives %}<th>Alternative {{ a.alt.id }}</th>{% endfor %}</tr>
+  <tr><td>Distance</td><td>{{ r.route.distance_range_km[0] }}–{{ r.route.distance_range_km[1] }} km (baseline)</td>{% for a in r.alternatives %}<td>{{ '%+.1f' % a.alt.delta_km }} km on {{ a.alt.leg_label }}</td>{% endfor %}</tr>
+  <tr><td>Time</td><td>Baseline</td>{% for a in r.alternatives %}<td>{{ '%+.0f' % a.alt.delta_min }} min</td>{% endfor %}</tr>
+  <tr><td>Traffic</td><td>{{ r.route.exposures.traffic_level | title }}</td>{% for a in r.alternatives %}<td>Not assessed</td>{% endfor %}</tr>
+  <tr><td>Safety</td><td class="band band-LOW bg-LOW">PREFERRED</td>{% for a in r.alternatives %}<td class="band band-MEDIUM bg-MEDIUM">CONTINGENCY</td>{% endfor %}</tr>
+  <tr><td>Complexity</td><td>{{ r.route.complexity | title }}</td>{% for a in r.alternatives %}<td>Not assessed</td>{% endfor %}</tr>
+  <tr><td>Recommendation</td><td>Default route</td>{% for a in r.alternatives %}<td>{{ a.use_when }}</td>{% endfor %}</tr>
+</table>
+<div class="gap-row"></div>
+<div class="reco"><b>ROUTE RECOMMENDATION</b>{{ r.narrative.route_recommendation }}<br>Alternative route selection requires live navigation verification — do not divert on the basis of this document alone.</div>
+{{ c.footer(r, 4) }}
+</section>

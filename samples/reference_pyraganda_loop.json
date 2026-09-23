@@ -1,0 +1,10 @@
+{
+  "_comment": "Test/demo data shaped like the master JMP PDF (13-point circular loop). Not used by production logic.",
+  "start_location": "Pyraganda",
+  "stops": ["Chakdah", "Madanpur", "Palpara", "Kalyani", "Naihati", "Jagaddal", "Kakinara", "Shyamnagar",
+            "Kalyani Junction", "Kalyani North", "Manipal Hospital, Kalyani"],
+  "end_location": "Pyraganda",
+  "vehicle_type": "4W",
+  "travel_date": "2026-08-08",
+  "depart_time": "09:00"
+}

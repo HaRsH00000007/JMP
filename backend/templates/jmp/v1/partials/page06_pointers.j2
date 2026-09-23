@@ -1,0 +1,25 @@
+{% import "partials/components.j2" as c %}
+<section class="page" data-page="6">
+{{ c.demo_marks(r) }}
+{{ c.section_bar('ROUTE HAZARD POINTERS', 6) }}
+<div class="pointer-intro">The {{ r.pointers | length }} highest-ranked route-specific hazards from Danone's 25-Hazard library, placed at the distance along the route where they were measured. Hazards without a measured location (seasonal or route-wide conditions) are listed separately below — they are never placed at an assumed position. Full list: Page 5.</div>
+<div class="pointer-grid">{{ svg.spine }}</div>
+{% set wide = r.pointers | selectattr('hazard.route_wide') | list %}
+{% if wide %}
+<div class="wide-band"><div class="k">ROUTE-WIDE CONDITIONS</div>
+{% for row in wide %}<div>{{ c.pill(row.hazard.display_band) }} <b>{{ row.display_name }}</b> — {{ row.route_context }} <i>({{ row.hazard.short_control }})</i></div>{% endfor %}
+</div>
+{% endif %}
+<div class="verify">
+{{ c.h2('REQUIRES OPERATIONAL VERIFICATION — BEFORE TRAVEL') }}
+<table class="t compact">
+  <tr><th style="width:4%">#</th><th style="width:48%">Item to confirm</th><th>Why</th><th style="width:11%">Source</th></tr>
+  {% for v in r.verification %}
+  <tr><td>{{ loop.index }}</td><td>{{ v.item }}</td><td>{{ v.reason }}</td><td>{{ 'Rules' if v.source == 'rule' else 'Narrative' }}</td></tr>
+  {% else %}
+  <tr><td colspan="4">No open verification items.</td></tr>
+  {% endfor %}
+</table>
+</div>
+{{ c.footer(r, 6) }}
+</section>

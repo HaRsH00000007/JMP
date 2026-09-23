@@ -1,0 +1,52 @@
+{% import "partials/components.j2" as c %}
+<section class="page" data-page="2">
+{{ c.demo_marks(r) }}
+<div class="banner">
+  <div class="a">{{ r.meta.company }}</div>
+  <div class="b">JOURNEY MANAGEMENT PLAN</div>
+  <div class="c">Journey Risk Assessment &amp; Journey Intelligence — {{ r.route.route_name }}</div>
+</div>
+<div class="gap-row"></div>
+<table class="t">
+  <tr><th>Journey ID</th><th>Route</th><th>Region</th><th>Journey Type</th><th>Status</th><th>Version</th></tr>
+  <tr><td>{{ r.meta.journey_code }}</td><td>{{ r.route.route_name }} ({{ r.route.waypoint_count }} pts)</td><td>{{ r.route.region_label }}</td>
+      <td>{{ r.route.journey_type }}</td><td class="band band-MEDIUM bg-MEDIUM">{{ r.scores.decision }}</td><td>{{ r.meta.version_label }}</td></tr>
+</table>
+
+{{ c.h2('EXECUTIVE SUMMARY') }}
+<p class="body">{{ r.narrative.executive_summary }}</p>
+
+{{ c.h2('JOURNEY DASHBOARD') }}
+<div class="tiles cols-4">
+  {{ c.tile(icon('route', 9) ~ ' Distance', r.route.distance_range_km[0] ~ '–' ~ r.route.distance_range_km[1] ~ ' km', 'ASSESSMENT') }}
+  {{ c.tile(icon('clock', 9) ~ ' Driving time', (r.route.duration_range_min[0] | hm) ~ '–' ~ (r.route.duration_range_min[1] | hm), 'ASSESSMENT') }}
+  {{ c.tile(icon('pin', 9) ~ ' Stops', r.route.intermediate_stops ~ (' + return' if r.route.is_round_trip else ''), r.route.waypoint_count ~ ' waypoints') }}
+  {{ c.tile(icon('alert', 9) ~ ' Risk level', r.scores.risk_level, 'Subject to validation', 'band-' ~ r.scores.risk_level) }}
+</div>
+<div class="gap-row"></div>
+<div class="tiles cols-4">
+  {{ c.tile(icon('gauge', 9) ~ ' Journey score', r.scores.total ~ ' / 100', 'Subject to validation') }}
+  {{ c.tile(icon('layers', 9) ~ ' Complexity', r.route.complexity, r.route.complexity_basis) }}
+  {{ c.tile(icon('rest', 9) ~ ' Fatigue risk', r.scores.fatigue_level, r.scores.fatigue_trend) }}
+  {{ c.tile(icon('shield', 9) ~ ' Status', r.scores.decision, 'Pending sign-off', 'band-MEDIUM') }}
+</div>
+
+{{ c.h2('JOURNEY TIMELINE') }}
+{% set n = r.route.waypoints | length %}
+{% set per_row = n if n <= 15 else ((n + 1) // 2) %}
+<div class="timeline" style="grid-template-columns: repeat({{ per_row }}, 1fr)">
+{% for w in r.route.waypoints %}
+  <div class="chip {{ 'se' if w.kind in ('start', 'end') }} {{ 'inst' if w.is_institutional }}">{{ '%02d' % w.seq }} {{ w.short_name }}</div>
+{% endfor %}
+</div>
+<div class="caption">{{ r.meta.classification_note }}</div>
+
+{{ c.h2('DATA CLASSIFICATION') }}
+<table class="t compact">
+  <tr><th style="width:28%">Classification</th><th>What it covers in this report</th></tr>
+  <tr><td class="status-VERIFIED">VERIFIED / PROVIDED</td><td>Danone 25-Hazard library values (severity, probability, RPN, controls); national numbers 112 / 108; details supplied with the journey.</td></tr>
+  <tr><td class="band-MEDIUM band">ASSESSMENT</td><td>Distances, times, road types, exposures, hazard applicability and ranking, scores, fatigue and decision — derived from {{ r.meta.providers.route }} route data and configured rules; narrative text.</td></tr>
+  <tr><td class="status-REQUIRES_VERIFICATION">REQUIRES OPERATIONAL VERIFICATION</td><td>Items listed on Page 6 and directory entries so marked on Page 8 — confirm before travel.</td></tr>
+</table>
+{{ c.footer(r, 2) }}
+</section>

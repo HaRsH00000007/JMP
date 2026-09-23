@@ -1,0 +1,42 @@
+# D-21 — seasonal / regional windows used by INFERRED hazards (#12 waterlogging, #13 landslide,
+# #14 fog, #18 slippery). DRAFT from general IMD climatology — OWNED BY DANONE EHS, pending approval.
+# Months are 1-12. `code` is the state code used in journey IDs (D-12).
+version: "1.0-draft"
+default:
+  code: IN
+  monsoon_months: [6, 7, 8, 9]
+  fog_months: []
+  hilly: false
+states:
+  "Punjab":            {code: PB, monsoon_months: [7, 8, 9], fog_months: [12, 1], hilly: false}
+  "Haryana":           {code: HR, monsoon_months: [7, 8, 9], fog_months: [12, 1], hilly: false}
+  "Chandigarh":        {code: CH, monsoon_months: [7, 8, 9], fog_months: [12, 1], hilly: false}
+  "Delhi":             {code: DL, monsoon_months: [7, 8, 9], fog_months: [12, 1], hilly: false}
+  "National Capital Territory of Delhi": {code: DL, monsoon_months: [7, 8, 9], fog_months: [12, 1], hilly: false}
+  "Uttar Pradesh":     {code: UP, monsoon_months: [7, 8, 9], fog_months: [12, 1], hilly: false}
+  "Bihar":             {code: BR, monsoon_months: [6, 7, 8, 9], fog_months: [12, 1], hilly: false}
+  "West Bengal":       {code: WB, monsoon_months: [6, 7, 8, 9, 10], fog_months: [12, 1], hilly: false}
+  "Jharkhand":         {code: JH, monsoon_months: [6, 7, 8, 9], fog_months: [], hilly: false}
+  "Odisha":            {code: OD, monsoon_months: [6, 7, 8, 9, 10], fog_months: [], hilly: false}
+  "Assam":             {code: AS, monsoon_months: [5, 6, 7, 8, 9], fog_months: [12, 1], hilly: false}
+  "Rajasthan":         {code: RJ, monsoon_months: [7, 8, 9], fog_months: [12, 1], hilly: false}
+  "Gujarat":           {code: GJ, monsoon_months: [6, 7, 8, 9], fog_months: [], hilly: false}
+  "Maharashtra":       {code: MH, monsoon_months: [6, 7, 8, 9], fog_months: [], hilly: false}
+  "Goa":               {code: GA, monsoon_months: [6, 7, 8, 9], fog_months: [], hilly: false}
+  "Madhya Pradesh":    {code: MP, monsoon_months: [7, 8, 9], fog_months: [12, 1], hilly: false}
+  "Chhattisgarh":      {code: CG, monsoon_months: [6, 7, 8, 9], fog_months: [], hilly: false}
+  "Telangana":         {code: TG, monsoon_months: [6, 7, 8, 9, 10], fog_months: [], hilly: false}
+  "Andhra Pradesh":    {code: AP, monsoon_months: [6, 7, 8, 9, 10, 11], fog_months: [], hilly: false}
+  "Karnataka":         {code: KA, monsoon_months: [6, 7, 8, 9], fog_months: [], hilly: false}
+  "Kerala":            {code: KL, monsoon_months: [6, 7, 8, 9, 10, 11], fog_months: [], hilly: false}
+  "Tamil Nadu":        {code: TN, monsoon_months: [10, 11, 12], fog_months: [], hilly: false}
+  "Himachal Pradesh":  {code: HP, monsoon_months: [7, 8, 9], fog_months: [12, 1], hilly: true}
+  "Uttarakhand":       {code: UK, monsoon_months: [6, 7, 8, 9], fog_months: [12, 1], hilly: true}
+  "Jammu and Kashmir": {code: JK, monsoon_months: [7, 8], fog_months: [12, 1], hilly: true}
+  "Sikkim":            {code: SK, monsoon_months: [5, 6, 7, 8, 9], fog_months: [], hilly: true}
+  "Meghalaya":         {code: ML, monsoon_months: [5, 6, 7, 8, 9], fog_months: [], hilly: true}
+  "Arunachal Pradesh": {code: AR, monsoon_months: [5, 6, 7, 8, 9], fog_months: [], hilly: true}
+  "Nagaland":          {code: NL, monsoon_months: [5, 6, 7, 8, 9], fog_months: [], hilly: true}
+  "Manipur":           {code: MN, monsoon_months: [5, 6, 7, 8, 9], fog_months: [], hilly: true}
+  "Mizoram":           {code: MZ, monsoon_months: [5, 6, 7, 8, 9], fog_months: [], hilly: true}
+  "Tripura":           {code: TR, monsoon_months: [5, 6, 7, 8, 9], fog_months: [], hilly: false}

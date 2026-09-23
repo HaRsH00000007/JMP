@@ -1,0 +1,3 @@
+Carlito — metric-compatible with Calibri. Copyright tyPoland Lukasz Dziedzic. SIL Open Font License 1.1.
+Arimo   — metric-compatible with Arial. Copyright Google LLC. Apache License 2.0.
+Downloaded from Google Fonts; embedded so PDF output does not depend on fonts installed on the host.

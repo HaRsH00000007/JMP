@@ -1,0 +1,92 @@
+# Deterministic route-analysis & hazard-detection rules (hazard-library.md §6-7).
+# Every threshold here is an ASSUMPTION pending calibration against real Danone JMPs.
+# Bump `version` on any change — it is stamped on route_analysis and jmp_documents.
+version: "1.0"
+
+sampling:
+  resample_m: 25              # geometry resampling step for curvature analysis
+  elevation_step_m: 250       # elevation sampling step
+  road_sample_step_m: 200     # step for matching route points to OSM ways
+  feature_buffer_m: 30        # max distance from route for a point feature to count as "on route"
+  area_buffer_m: 150          # max distance for area features (landuse, forest)
+
+# OSM highway class / ref -> road category used for road-type split and segments
+road_categories:
+  expressway:       {label: "Expressway",            highway: [motorway, motorway_link]}
+  national_highway: {label: "National Highway",      highway: [trunk, trunk_link], ref_prefixes: ["NH"]}
+  state_highway:    {label: "State Highway",         ref_prefixes: ["SH"]}
+  arterial:         {label: "Urban / arterial road", highway: [primary, primary_link, secondary, secondary_link]}
+  local:            {label: "Township / local road", highway: [tertiary, tertiary_link, residential, unclassified, living_street, service, road]}
+  unpaved:          {label: "Unpaved / track",       highway: [track, path], surfaces: [unpaved, dirt, gravel, ground, mud, sand, earth]}
+category_order: [expressway, national_highway, state_highway, arterial, local, unpaved]
+
+ranges:                       # D-16
+  distance_factor: [1.0, 1.1]
+  duration_factor: [1.0, 1.3]
+  dwell_minutes_per_stop: 0   # driving time only (dwell excluded, as in the reference report)
+
+segments:
+  max_segments: 8
+  min_segment_km: 0.5
+
+exposure_levels:
+  pedestrian:  {HIGH: 40, MODERATE: 15}          # % of route through built-up area
+  hcv:         {HIGH: 25, MODERATE: 10}          # % of route on expressway + national highway
+  traffic:                                       # busy intersections per 10 km + built-up share/10
+    HIGH: 6
+    MODERATE: 2.5
+
+complexity:                   # waypoint count and number of road categories
+  high_if: {waypoints_gte: 15, road_types_gte: 5}
+  low_if: {waypoints_lte: 3, road_types_lte: 2}
+
+detectors:
+  HZ-01: {kind: curvature, min_turn_deg: 70, window_m: 60, ignore_near_maneuver_m: 45, min_count: 1}
+  HZ-02: {kind: gradient, direction: up, min_grade_pct: 7, window_m: 500, min_count: 1}
+  HZ-03: {kind: gradient, direction: down, min_grade_pct: 7, window_m: 500, min_count: 1}
+  HZ-04: {kind: narrow_road, min_share_pct: 10, min_km: 1.0}
+  HZ-05: {kind: surface_quality, min_local_or_unpaved_share_pct: 20}
+  HZ-06: {kind: speed_breaker, min_local_share_pct: 20, min_built_up_share_pct: 15}
+  HZ-07: {kind: point_feature, feature: bridge, min_count: 1}
+  HZ-08: {kind: level_crossing, min_count: 1}
+  HZ-09: {kind: blind_curve, min_turn_deg: 45, window_m: 60, ignore_near_maneuver_m: 45, min_count: 2,
+          context: [hilly, built_up]}
+  HZ-10: {kind: missing_signage, min_nonlocal_km: 5, min_missing_maxspeed_share_pct: 80}
+  HZ-11: {kind: verify_only, reason: "Construction and diversions change daily and are not in route data."}
+  HZ-12: {kind: season, season: monsoon}
+  HZ-13: {kind: landslide, min_relief_m: 300, requires_hilly_region: true}
+  HZ-14: {kind: season, season: fog}
+  HZ-15: {kind: point_feature, feature: busy_junction, min_count: 3}
+  HZ-16: {kind: point_feature, feature: rural_junction, min_count: 1}
+  HZ-17: {kind: point_feature, feature: overhead_restriction, min_count: 1}
+  HZ-18: {kind: slippery, season: monsoon, min_unpaved_share_pct: 5, min_local_share_pct: 30}
+  HZ-19: {kind: area_feature, feature: forest, min_km: 1.0}
+  HZ-20: {kind: pedestrian, min_built_up_share_pct: 30, min_poi_count: 5}
+  HZ-21: {kind: ghat, min_grade_pct: 6, min_sharp_curves: 3, requires_hilly_region: true, major_bridge_min_m: 500}
+  HZ-22: {kind: remote_area, max_built_up_share_pct: 10, min_route_km: 30}
+  HZ-23: {kind: night, sunset_buffer_min: 30}
+  HZ-24: {kind: highway, categories: [national_highway, expressway], min_km: 1.0}
+  HZ-25: {kind: dip, min_depth_m: 4, window_m: 400}
+
+# When the library has no exact hazard for an exposure, the report states the analog explicitly
+# (master PDF: "National Highway analog – Expressway / SH-1 (HCV exposure)").
+analog_labels:
+  HZ-24:
+    expressway: "National Highway analog – Expressway (HCV exposure)"
+
+report_caps:                  # pdf-analysis.md §7 (D-18: exceeding a cap is prevented by ranking)
+  hazard_table_max: 10
+  top_hazards_max: 7
+  exposure_cards_max: 5
+  key_hazards_max: 5
+  hazard_pointers_default: 5
+  hazard_pointers_min: 3
+  timeline_max_waypoints: 15
+  verification_items_max: 10
+
+# Ranking: sort key order (hazard-library.md §7)
+ranking:
+  band_order: [HIGH, MEDIUM, LOW]
+  zone_order: [RED, YELLOW, GREEN]
+  probability_order: [E, D, C, B, A]
+  evidence_order: [DETECTED, INFERRED]

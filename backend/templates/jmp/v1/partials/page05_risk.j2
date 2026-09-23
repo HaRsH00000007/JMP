@@ -1,0 +1,24 @@
+{% import "partials/components.j2" as c %}
+<section class="page" data-page="5">
+{{ c.demo_marks(r) }}
+{{ c.section_bar('ROUTE RISK ANALYSIS & ASSESSMENT', 5) }}
+<div class="intro">Hazards below are drawn from Danone's authoritative 25-Hazard Risk Library (version {{ r.meta.versions.hazard_library_version }}). Severity, Probability and RPN values are reproduced exactly as supplied; only route-relevant hazards are shown.
+{% if r.route.travel.vehicle_type_specified %}Vehicle type: {{ '2-Wheeler' if r.route.travel.vehicle_type == '2W' else '4-Wheeler' }} — the {{ r.route.travel.vehicle_type }} control set is shown.{% else %}Vehicle type was not specified in the journey brief — to be confirmed; controls shown assume 4-Wheeler travel (apply the 2-Wheeler control set if a motorcycle/scooter is used).{% endif %}</div>
+<table class="t">
+  <tr><th style="width:17%">Danone Hazard</th><th style="width:22%">Route Context</th><th>Sev.</th><th>Prob.</th><th>RPN</th><th>Matrix</th><th style="width:9%">Risk*</th><th style="width:27%">Key Control ({{ r.route.travel.vehicle_type }})</th></tr>
+  {% for row in r.hazard_table %}
+  <tr><td>{{ row.hazard.name }}</td><td>{{ row.route_context }}</td><td>{{ row.hazard.severity }}</td><td>{{ row.hazard.probability }}</td>
+      <td>{{ row.hazard.rpn_code }}</td><td>{{ row.hazard.matrix_zone | title }}</td>{{ c.band_cell(row.hazard.display_band) }}<td>{{ row.hazard.short_control }}</td></tr>
+  {% endfor %}
+</table>
+<div class="caption">{% if risk_method == 'matrix_zone' %}*Risk band = Danone likelihood × consequence matrix zone (Red = HIGH, Yellow = MEDIUM, Green = LOW) — Subject to Danone EHS validation.{% else %}*Risk band is an indicative categorisation derived from Danone's supplied Severity value for prioritisation only (5 = HIGH, 4 = MEDIUM, ≤3 = LOW) — Subject to Danone EHS validation. "Matrix" shows the zone of the same S/P values in Danone's likelihood × consequence matrix.{% endif %} Evidence: detected in route data or inferred from season/region/road-class rules; see Page 6.</div>
+
+{{ c.h2('TOP ROUTE-SPECIFIC HAZARDS') }}
+<table class="t">
+  <tr><th style="width:8%">Rank</th><th>Hazard</th><th style="width:13%">Evidence</th><th style="width:12%">Risk</th></tr>
+  {% for row in r.top_hazards %}
+  <tr><td>{{ row.hazard.rank }}</td><td>{{ row.display_name }} {{ row.qualifier }}</td><td>{{ row.hazard.evidence | title }}</td>{{ c.band_cell(row.hazard.display_band) }}</tr>
+  {% endfor %}
+</table>
+{{ c.footer(r, 5) }}
+</section>

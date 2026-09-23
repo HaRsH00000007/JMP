@@ -1,0 +1,49 @@
+# D-06 / D-07 — PROPOSED display text. NOTHING here is used until Danone EHS sets `approved: true`.
+#
+# * short_controls: one-line control per hazard and vehicle type (page 1 "Required control",
+#   page 5 "Key control", page 7 "One-line mitigation"). While unapproved, the renderer uses the first
+#   two VERBATIM library bullets instead (excluding the generic seat-belt / safety-gear bullet).
+# * name_corrections / text_corrections: typo fixes. While unapproved (or HAZARD_DISPLAY_TEXT=verbatim)
+#   the library text is printed exactly as supplied.
+version: "1.0-proposed"
+approved: false
+approved_by: null
+approved_on: null
+
+short_controls:
+  HZ-01: {4W: "Reduce speed before the bend; signal early; hold lane", 2W: "Reduce speed before the bend; horn on blind curves; hold lane"}
+  HZ-02: {4W: "Lower gear; maintain momentum; keep safe distance", 2W: "Lower gear; steady throttle; keep safe distance"}
+  HZ-03: {4W: "Engine braking; no sudden braking; keep safe distance", 2W: "Engine braking; no sudden braking; slow speed"}
+  HZ-04: {4W: "Reduce speed; horn at blind spots; no overtaking", 2W: "Slow down; keep extreme left; overtake with caution"}
+  HZ-05: {4W: "Slow down; maintain control; avoid sudden swerves", 2W: "Reduce speed; firm grip; avoid sudden swerves"}
+  HZ-06: {4W: "Slow down; cross smoothly; keep a safe gap", 2W: "Reduce speed; no sudden braking; stay seated"}
+  HZ-07: {4W: "Reduce speed; stay in lane; no overtaking", 2W: "Slow down; no overtaking; stay in lane"}
+  HZ-08: {4W: "Stop, look both sides; cross only when clear at 10–20 km/h", 2W: "Stop, look both sides; cross only when clear at 10–20 km/h"}
+  HZ-09: {4W: "Slow down; check mirrors; use horn; hold lane", 2W: "Slow down; check mirrors; use horn; hold lane"}
+  HZ-10: {4W: "Scan continuously; keep left; 40 km/h city / 60 km/h highway", 2W: "Scan continuously; keep left; 40 km/h city / 60 km/h highway"}
+  HZ-11: {4W: "Reduce speed; follow cones and diversion signs", 2W: "10–20 km/h through works; watch for workers; follow diversions"}
+  HZ-12: {4W: "Avoid deep water; low gear; test brakes after", 2W: "Avoid deep water; ride slowly in low gear; test brakes after"}
+  HZ-13: {4W: "Do not park; pass carefully; follow local advisory", 2W: "Do not park; pass carefully; follow local advisory"}
+  HZ-14: {4W: "Fog/low-beam lights; drive slowly; see and be seen", 2W: "Fog/low-beam lights; reduce speed"}
+  HZ-15: {4W: "Slow down; give way to main-road traffic; scan continuously", 2W: "Slow down; give way to main-road traffic; scan continuously"}
+  HZ-16: {4W: "Slow down; expect sudden entry; scan for animals/vehicles", 2W: "Slow down; expect sudden entry; scan for animals/vehicles"}
+  HZ-17: {4W: "Watch for hanging wires; check height signage", 2W: "Watch for hanging wires; keep away from large vehicles"}
+  HZ-18: {4W: "Reduce speed; no sudden braking; longer braking distance", 2W: "Longer braking distance; no sudden turns; lower gear"}
+  HZ-19: {4W: "Slow down; give way to animals; avoid extreme left", 2W: "Slow down; give way to animals; avoid extreme left"}
+  HZ-20: {4W: "Slow down; give way to pedestrians; scan continuously", 2W: "Slow down; give way to pedestrians; scan continuously"}
+  HZ-21: {4W: "Keep extreme left; no overspeeding; avoid night travel", 2W: "Keep extreme left; no overspeeding; avoid night travel"}
+  HZ-22: {4W: "Share journey details and inform contacts before entering", 2W: "Share journey details; avoid solo travel"}
+  HZ-23: {4W: "Use headlights properly; reduce speed; no self-drive after 22:00", 2W: "High-visibility clothing; no self-drive after 22:00"}
+  HZ-24: {4W: "Keep left; scan continuously; posted speed limit; signal lane changes", 2W: "Keep extreme left; posted speed limit; signal lane changes"}
+  HZ-25: {4W: "Lower gear; brake before the dip", 2W: "Lower gear; brake before the dip"}
+
+name_corrections: {}
+text_corrections:
+  "Maesure": "Measure"
+  "Wheeeler": "Wheeler"
+  "Wheerler": "Wheeler"
+  "noyt": "not"
+  "tarffic": "traffic"
+  "continuosly": "continuously"
+  "breaking distance": "braking distance"
+  "10 ti 20": "10 to 20"

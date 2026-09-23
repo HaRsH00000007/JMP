@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en-IN">
+<head>
+<meta charset="utf-8">
+<title>{{ r.meta.company_title }} — Journey Management Plan {{ r.meta.journey_code }}</title>
+<style>
+{{ fonts_css }}
+{{ styles_css }}
+</style>
+</head>
+<body data-template-version="{{ r.meta.versions.template_version }}" data-journey="{{ r.meta.journey_code }}">
+{% include "partials/page01_snapshot.j2" %}
+{% include "partials/page02_summary.j2" %}
+{% include "partials/page03_route.j2" %}
+{% include "partials/page04_alternatives.j2" %}
+{% include "partials/page05_risk.j2" %}
+{% include "partials/page06_pointers.j2" %}
+{% include "partials/page07_assessment.j2" %}
+{% include "partials/page08_emergency.j2" %}
+</body>
+</html>

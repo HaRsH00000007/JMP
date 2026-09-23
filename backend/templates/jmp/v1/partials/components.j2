@@ -1,0 +1,33 @@
+{# Reusable report components. Layout is fixed here — no content from the LLM can alter structure. #}
+
+{% macro demo_marks(r) -%}
+{% if r.meta.show_demo_watermark %}
+<div class="demo-ribbon">DEMO {% if r.meta.demo_data %}ROUTE DATA{% endif %}{% if r.meta.demo_data and r.meta.demo_narrative %} + {% endif %}{% if r.meta.demo_narrative %}TEMPLATE NARRATIVE{% endif %} — NOT FOR OPERATIONAL USE</div>
+<div class="demo-mark">DEMO — NOT FOR OPERATIONAL USE</div>
+{% endif %}
+{%- endmacro %}
+
+{% macro section_bar(title, page) -%}
+<div class="section-bar"><h1>{{ title }}</h1><span class="pg">Page {{ page }}</span></div>
+{%- endmacro %}
+
+{% macro footer(r, page) -%}
+<div class="footer">{{ r.meta.company_title }} – {{ r.meta.department }} · Journey Management Plan · Confidential &nbsp;|&nbsp; Page <b>{{ page }}</b> of {{ r.meta.page_total }}</div>
+{%- endmacro %}
+
+{% macro h2(text) -%}<div class="h2">{{ text }}</div>{%- endmacro %}
+
+{% macro pill(band) -%}<span class="pill pill-{{ band }}">{{ band }}</span>{%- endmacro %}
+
+{% macro band_cell(band) -%}<td class="band band-{{ band }} bg-{{ band }}">{{ band }}</td>{%- endmacro %}
+
+{% macro tile(k, v, s, vclass='') -%}
+<div class="tile"><div class="k">{{ k }}</div><div class="v {{ vclass }}">{{ v }}</div><div class="s">{{ s }}</div></div>
+{%- endmacro %}
+
+{% macro kv_table(headers, values) -%}
+<table class="t"><tr>{% for h in headers %}<th style="width:{{ 100 / headers|length }}%">{{ h }}</th>{% endfor %}</tr>
+<tr>{% for v in values %}<td>{{ v }}</td>{% endfor %}</tr></table>
+{%- endmacro %}
+
+{% macro hazard_name(row) -%}{{ row.display_name }}{%- endmacro %}

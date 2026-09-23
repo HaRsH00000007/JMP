@@ -1,0 +1,33 @@
+{% import "partials/components.j2" as c %}
+<section class="page" data-page="8">
+{{ c.demo_marks(r) }}
+{{ c.section_bar('EMERGENCY PREPAREDNESS & JOURNEY DECISION', 8) }}
+{% for p in r.emergency_protocols %}
+<div class="proto {{ p.tone }}"><div class="k">{{ icon({'accident': 'alert', 'breakdown': 'wrench', 'medical': 'hospital', 'weather': 'weather'}.get(p.key, 'alert'), 11, '#0A2545') }} {{ p.title }}</div><div class="s">{{ p.steps | join(' → ') }}</div></div>
+{% endfor %}
+
+{{ c.h2('EMERGENCY DIRECTORY') }}
+<table class="t compact">
+  <tr><th style="width:17%">Type</th><th style="width:36%">Name / Details</th><th>Location</th><th style="width:21%">Status</th></tr>
+  {% for d in r.emergency_directory %}
+  <tr><td>{{ icon({'Emergency': 'phone', 'Hospital': 'hospital', 'Police': 'police', 'Fuel': 'fuel', 'Roadside Assist.': 'wrench'}.get(d.type, 'phone'), 9, '#1A396A') }} {{ d.type }}</td><td>{{ d.name }}</td><td>{{ d.location }}</td>
+      <td class="status-{{ d.status }} status-cell-{{ d.status }}">{{ d.status | replace('_', ' ') }}</td></tr>
+  {% endfor %}
+</table>
+<div class="caption">{{ r.emergency_note }}{% if r.hospital_network_url %} Insurer hospital network (from the hazard library source): {{ r.hospital_network_url }}{% endif %}</div>
+
+{{ c.h2('KEY JOURNEY HAZARDS') }}
+<table class="t compact">
+  <tr><th style="width:44%">Hazard</th><th style="width:12%">Risk</th><th>One-Line Mitigation</th></tr>
+  {% for row in r.key_hazards %}
+  <tr><td>{{ row.display_name }} {{ row.qualifier }}</td>{{ c.band_cell(row.hazard.display_band) }}<td>{{ row.hazard.short_control }}</td></tr>
+  {% endfor %}
+</table>
+
+<div class="final"><div class="k">FINAL JOURNEY DECISION: {{ r.scores.decision }}</div><p>{{ r.narrative.decision_rationale }}</p></div>
+
+{# Sign-off block removed in template v1.1 at Danone's request (the master PDF had one). #}
+<div class="disclaimer">{{ r.meta.disclaimer }}</div>
+<div class="versions">Template v{{ r.meta.versions.template_version }} · Hazard library v{{ r.meta.versions.hazard_library_version }} · Prompt v{{ r.meta.versions.prompt_version }} · Schema v{{ r.meta.versions.schema_version }} · Scoring v{{ r.meta.versions.scoring_version }} · Rules v{{ r.meta.versions.rules_version }} · App {{ r.meta.versions.app_version }} · Narrative: {{ r.meta.narrative_source }} ({{ r.meta.model }}) · Route data: {{ r.meta.providers.route }} · Generated {{ r.meta.generated_at[:16] | replace('T', ' ') }} UTC</div>
+{{ c.footer(r, 8) }}
+</section>

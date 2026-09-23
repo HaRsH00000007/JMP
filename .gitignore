@@ -1,0 +1,39 @@
+# ---------------------------------------------------------------------------------------------
+# Secrets — never commit
+# ---------------------------------------------------------------------------------------------
+.env
+*.env.local
+!.env.example
+
+# ---------------------------------------------------------------------------------------------
+# Client data — this repository is public.
+#
+# source/  Danone's supplied documents (the master JMP PDF is marked "Confidential", plus the
+#          25-hazard workbook). Supply these at deploy time; see README "Supplying the source files".
+# data/    Real journey submissions: employee names, e-mail addresses and home addresses.
+# ---------------------------------------------------------------------------------------------
+source/
+data/
+
+# ---------------------------------------------------------------------------------------------
+# Generated output — contains the same personal data as the inputs
+# ---------------------------------------------------------------------------------------------
+backend/var/
+*.db
+*.db-wal
+*.db-shm
+
+# ---------------------------------------------------------------------------------------------
+# Build artefacts
+# ---------------------------------------------------------------------------------------------
+__pycache__/
+*.pyc
+backend/.venv/
+.venv/
+.pytest_cache/
+frontend/node_modules/
+frontend/dist/
+frontend/tsconfig.tsbuildinfo
+.idea/
+.vscode/
+.DS_Store

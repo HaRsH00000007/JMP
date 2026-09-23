@@ -1,0 +1,43 @@
+{% import "partials/components.j2" as c %}
+<section class="page" data-page="7">
+{{ c.demo_marks(r) }}
+{{ c.section_bar('JOURNEY ASSESSMENT & SAFETY READINESS', 7) }}
+<div class="score-head">
+  <div class="t">Journey Readiness Score — Subject to Danone EHS Validation</div>
+  <div class="a">{{ r.scores.total }} / 100 &nbsp;<span style="font-weight:400">(exact {{ '%.2f' % r.scores.total_exact }})</span></div>
+  <div class="b">Fatigue Trend: {{ r.scores.fatigue_trend }}</div>
+</div>
+<div class="gap-row"></div>
+<table class="t">
+  <tr><th style="width:26%">Dimension</th><th>Weight</th><th>Score</th><th>Contribution</th><th style="width:38%">Remarks</th></tr>
+  {% for d in r.dimensions %}
+  <tr><td>{{ d.dim.label }}</td><td>{{ '%.0f' % (d.dim.weight * 100) }}%</td><td>{{ d.dim.score }}/100</td><td>{{ '%.2f' % d.dim.contribution }}</td><td>{{ d.remark }}</td></tr>
+  {% endfor %}
+</table>
+
+{{ c.h2('FATIGUE ASSESSMENT') }}
+<table class="t">
+  <tr><th style="width:40%">Journey Segment</th><th style="width:18%">Fatigue Level</th><th>Basis</th></tr>
+  {% for f in r.fatigue %}
+  {% set fb = 'LOW' if f.stint.level == 'LOW' else ('HIGH' if f.stint.level == 'HIGH' else 'MEDIUM') %}
+  <tr><td>{{ f.stint.label }}</td><td class="band band-{{ fb }} bg-{{ fb }}">{{ f.stint.level }}</td><td>{{ f.basis }}</td></tr>
+  {% endfor %}
+</table>
+<div class="fatigue-note"><b>Fatigue management:</b> {{ r.narrative.fatigue_management }}</div>
+<div class="tiles cols-3">
+  {{ c.tile(icon('layers', 9) ~ ' Journey complexity', r.route.complexity, r.route.complexity_basis, 'band-' ~ r.route.complexity) }}
+  {{ c.tile(icon('clock', 9) ~ ' Driving time', (r.route.duration_range_min[0] | hm) ~ '–' ~ (r.route.duration_range_min[1] | hm), 'excludes dwell time at stops') }}
+  {{ c.tile(icon('moon', 9) ~ ' Night driving', 'Yes' if r.route.travel.night_overlap else ('No' if r.route.travel.night_overlap == false else 'Not assessed'), ('Sunset ' ~ r.route.travel.sunset_local) if r.route.travel.sunset_local else 'Date/time not supplied') }}
+</div>
+
+{{ c.h2('JOURNEY ASSESSMENT') }}
+<p class="body">{{ r.narrative.journey_assessment }}</p>
+
+{{ c.h2('PRIORITY RECOMMENDATIONS') }}
+<div class="recs">
+  {% for key, label, ic in [('before_departure', 'BEFORE DEPARTURE', 'list'), ('during_journey', 'DURING JOURNEY', 'car'), ('at_stops', 'AT STOPS', 'rest'), ('return_journey', 'RETURN JOURNEY', 'return')] %}
+  <div class="q"><div class="k">{{ icon(ic, 10, '#1A396A') }} {{ label }}</div><ul>{% for it in r.narrative.priority_recommendations[key] %}<li>{{ it }}</li>{% endfor %}</ul></div>
+  {% endfor %}
+</div>
+{{ c.footer(r, 7) }}
+</section>

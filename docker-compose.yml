@@ -1,0 +1,101 @@
+# Complete local stack: PostgreSQL, Redis, FastAPI, Celery workers (pipeline/render/bulk + llm), beat, React.
+#   cp .env.example .env   # then edit
+#   docker compose up --build
+# UI: http://localhost:8080   API docs: http://localhost:8000/api/docs
+
+x-backend: &backend
+  build: ./backend
+  env_file: .env
+  environment:
+    DATABASE_URL: postgresql+psycopg://jmp:${POSTGRES_PASSWORD:-jmp-local-only}@postgres:5432/jmp
+    REDIS_URL: redis://redis:6379/0
+    JOB_EXECUTION: celery
+    STORAGE_BACKEND: ${STORAGE_BACKEND:-local}
+    STORAGE_ROOT: /data/storage
+    HAZARD_SOURCE_XLSX: /source/JMP Template- 25 Hazards.xlsx
+  volumes:
+    - storage:/data/storage
+    - ./source:/source:ro
+  depends_on:
+    postgres: {condition: service_healthy}
+    redis: {condition: service_healthy}
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: jmp
+      POSTGRES_USER: jmp
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jmp-local-only}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jmp -d jmp"]
+      interval: 5s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: [redisdata:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 20
+    restart: unless-stopped
+
+  api:
+    <<: *backend
+    command: ["sh", "scripts/start-api.sh"]
+    ports: ["8000:8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
+      interval: 10s
+      retries: 30
+
+  worker:
+    <<: *backend
+    command: ["sh", "scripts/start-worker.sh"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://jmp:${POSTGRES_PASSWORD:-jmp-local-only}@postgres:5432/jmp
+      REDIS_URL: redis://redis:6379/0
+      JOB_EXECUTION: celery
+      STORAGE_ROOT: /data/storage
+      HAZARD_SOURCE_XLSX: /source/JMP Template- 25 Hazards.xlsx
+      QUEUES: pipeline,render,bulk
+      CONCURRENCY: ${WORKER_CONCURRENCY:-4}
+    depends_on:
+      api: {condition: service_healthy}
+
+  worker-llm:
+    <<: *backend
+    command: ["sh", "scripts/start-worker.sh"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://jmp:${POSTGRES_PASSWORD:-jmp-local-only}@postgres:5432/jmp
+      REDIS_URL: redis://redis:6379/0
+      JOB_EXECUTION: celery
+      STORAGE_ROOT: /data/storage
+      HAZARD_SOURCE_XLSX: /source/JMP Template- 25 Hazards.xlsx
+      QUEUES: llm
+      CONCURRENCY: ${LLM_CONCURRENCY:-4}   # hard cap on parallel Claude requests
+    depends_on:
+      api: {condition: service_healthy}
+
+  beat:
+    <<: *backend
+    command: ["celery", "-A", "app.workers.celery_app", "beat", "--loglevel=INFO", "--schedule=/tmp/celerybeat-schedule"]
+    depends_on:
+      api: {condition: service_healthy}
+
+  frontend:
+    build: ./frontend
+    ports: ["8080:8080"]
+    depends_on:
+      api: {condition: service_healthy}
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
+  storage:

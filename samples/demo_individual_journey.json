@@ -1,0 +1,12 @@
+{
+  "start_location": "Paras Downtown Zirakpur, Punjab",
+  "stops": [
+    "Chandigarh City Center Zirakpur, Punjab",
+    "SBP Housing Park Society Derabassi, Punjab"
+  ],
+  "end_location": "Danone Nutricia India Plant, Lalru, Punjab",
+  "vehicle_type": "4W",
+  "travel_date": "2026-10-05",
+  "depart_time": "09:30",
+  "manager_name": "Area Sales Manager (demo)"
+}

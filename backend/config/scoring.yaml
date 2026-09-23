@@ -1,0 +1,92 @@
+# Journey score, overall risk, decision and fatigue rules.
+# Weights are CONFIRMED from the reference PDF (page 6); everything else is the proposed default
+# rubric (D-03, D-04, D-05) — PENDING DANONE EHS APPROVAL. Bump `version` on any change.
+version: "1.0"
+
+# score = clamp(base + Σ coef × min(metric, cap), min, max)   — metrics are computed by ScoringEngine
+dimensions:
+  route_complexity:
+    label: "Route Complexity"
+    weight: 0.20
+    base: 100
+    terms:
+      - {metric: intermediate_stops, coef: -2.5, cap: 16}
+      - {metric: road_type_count_minus_one, coef: -6, cap: 5}
+      - {metric: route_km_over_100, coef: -0.1, cap: 300}
+    min: 20
+    max: 100
+  traffic_congestion:
+    label: "Traffic & Congestion"
+    weight: 0.20
+    base: 100
+    terms:
+      - {metric: built_up_share_pct, coef: -0.45, cap: 100}
+      - {metric: busy_junctions, coef: -1.5, cap: 20}
+    min: 20
+    max: 100
+  hcv_ped_rail_exposure:
+    label: "HCV / Pedestrian / Rail Exposure"
+    weight: 0.20
+    base: 100
+    terms:
+      - {metric: level_crossings, coef: -8, cap: 4}
+      - {metric: highway_share_pct, coef: -0.3, cap: 100}
+      - {metric: built_up_share_pct, coef: -0.2, cap: 100}
+    min: 20
+    max: 100
+  driver_fatigue:
+    label: "Driver Fatigue Potential"
+    weight: 0.15
+    base: 100
+    terms:
+      - {metric: driving_hours_upper, coef: -6, cap: 12}
+      - {metric: intermediate_stops, coef: -0.8, cap: 16}
+      - {metric: night_driving, coef: -15, cap: 1}
+    min: 20
+    max: 100
+  environmental:
+    label: "Environmental Risk (Seasonal)"
+    weight: 0.10
+    base: 100
+    terms:
+      - {metric: seasonal_hazards, coef: -15, cap: 3}
+      - {metric: hilly_region, coef: -10, cap: 1}
+      - {metric: travel_date_unknown, coef: -10, cap: 1}
+    min: 20
+    max: 100
+  preparedness:
+    label: "Vehicle & Emergency Preparedness"
+    weight: 0.15
+    base: 95
+    terms:
+      - {metric: remote_area, coef: -10, cap: 1}
+      - {metric: night_driving, coef: -10, cap: 1}
+    min: 20
+    max: 100
+
+# Overall risk level (first matching rule wins)
+risk_level:
+  - {level: HIGH, if_score_lt: 50}
+  - {level: HIGH, if_high_hazards_gte: 5}
+  - {level: MODERATE, if_score_lt: 75}
+  - {level: MODERATE, if_high_hazards_gte: 1}
+  - {level: LOW}
+
+# D-04 decision (first matching rule wins). The AI never gives final approval: sign-off stays human.
+decision:
+  - {decision: "REQUIRES REVIEW", if_score_lt: 50}
+  - {decision: "APPROVED WITH CONTROLS", if_high_hazards_gte: 1}
+  - {decision: "APPROVED WITH CONTROLS", if_risk_level_in: [MODERATE, HIGH]}
+  - {decision: "APPROVED"}
+
+# D-05 fatigue — continuous driving hours per stint (upper-bound driving time)
+fatigue:
+  levels:                       # ascending; first threshold not exceeded wins
+    - {level: LOW, max_hours: 1.5}
+    - {level: LOW–MODERATE, max_hours: 2.5}
+    - {level: MODERATE, max_hours: 4.0}
+    - {level: HIGH, max_hours: 999}
+  split_if_total_hours_gt: 1.5  # split into outbound/return (round trip) or first/second half
+  later_stint_bump_if_total_hours_gt: 2.5   # accumulated workload raises the later stint one level
+  night_level: HIGH             # any stint overlapping night hours
+  rest_minutes: "10–15"         # used verbatim in the fatigue-management line

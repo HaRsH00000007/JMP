@@ -1,0 +1,45 @@
+{% import "partials/components.j2" as c %}
+<section class="page" data-page="3">
+{{ c.demo_marks(r) }}
+{{ c.section_bar('ROUTE INTELLIGENCE & PRIMARY ROUTE ANALYSIS', 3) }}
+<div class="mapframe">
+  <div class="mh"><span>ROUTE MAP — {{ r.route.route_name | upper }}</span><i>Route visualisation from provider geometry — schematic, not to scale</i></div>
+  {{ svg.map_p3 }}
+</div>
+<div class="caption">Drawn from {{ r.meta.providers.route }} route geometry; hazard markers only where a location was measured. {% if r.meta.providers.features in ('overpass',) %}Road data © OpenStreetMap contributors (ODbL).{% endif %}</div>
+<div class="gap-row"></div>
+{% set rt = [] %}{% for t in r.route.road_types %}{% set _ = rt.append(t.label ~ ' ~' ~ t.pct ~ '%' ~ ((' (' ~ t.refs|join(', ') ~ ')') if t.refs else '')) %}{% endfor %}
+{{ c.kv_table(['Total Distance', 'Est. Driving Time', 'Road Types', 'Route Complexity'],
+  [r.route.distance_range_km[0] ~ '–' ~ r.route.distance_range_km[1] ~ ' km (ASSESSMENT)',
+   (r.route.duration_range_min[0] | hm) ~ '–' ~ (r.route.duration_range_min[1] | hm) ~ ' (ASSESSMENT)',
+   rt | join(' · '), r.route.complexity ~ ' (' ~ r.route.complexity_basis ~ ')']) }}
+<div class="gap-row"></div>
+{{ c.kv_table(['Urban Exposure', 'Highway/Expressway Exposure', 'Traffic Exposure', 'HCV Exposure'],
+  ['~' ~ r.route.exposures.built_up_share_pct ~ '% of route (' ~ r.route.exposures.settlements ~ ' settlements)',
+   '~' ~ r.route.exposures.highway_share_pct ~ '% of route',
+   r.route.exposures.traffic_level ~ ' (' ~ r.route.exposures.busy_junctions ~ ' major junctions)',
+   r.route.exposures.hcv_level ~ ((' – ' ~ r.route.exposures.industrial_areas ~ ' industrial area(s)') if r.route.exposures.industrial_areas else '')]) }}
+
+{{ c.h2('ROUTE INTELLIGENCE HIGHLIGHTS') }}
+{% set ex = r.route.exposures %}
+<div class="tiles cols-3">
+  {{ c.tile(icon('car', 9) ~ ' Traffic', ex.traffic_level, r.highlight_captions.traffic, 'band-' ~ ex.traffic_level) }}
+  {{ c.tile(icon('truck', 9) ~ ' HCV exposure', ex.hcv_level, r.highlight_captions.hcv, 'band-' ~ ex.hcv_level) }}
+  {{ c.tile(icon('train', 9) ~ ' Railway', (ex.level_crossings ~ ' level crossing' ~ ('s' if ex.level_crossings != 1 else '')) if ex.level_crossings else 'None detected', r.highlight_captions.railway) }}
+</div>
+<div class="gap-row"></div>
+<div class="tiles cols-3">
+  {{ c.tile(icon('walk', 9) ~ ' Pedestrian', ex.pedestrian_level, r.highlight_captions.pedestrian, 'band-' ~ ex.pedestrian_level) }}
+  {{ c.tile(icon('city', 9) ~ ' Urban density', ex.settlements ~ ' settlements', r.highlight_captions.urban_density) }}
+  {{ c.tile(icon('weather', 9) ~ ' Environmental', (ex.seasonal_flags | map('title') | join(' / ')) if ex.seasonal_flags else ('Date not supplied' if not r.route.travel.travel_month else 'No seasonal flag'), r.highlight_captions.environmental) }}
+</div>
+
+{{ c.h2('PRIMARY ROUTE BREAKDOWN') }}
+<table class="t">
+  <tr><th style="width:32%">Segment</th><th style="width:22%">Road Character</th><th>Key Exposure</th><th style="width:11%">Risk</th></tr>
+  {% for s in r.segments %}
+  <tr><td>{{ s.segment.label }}</td><td>{{ s.segment.road_character }}</td><td>{{ s.key_exposure }}</td>{{ c.band_cell(s.segment.risk) }}</tr>
+  {% endfor %}
+</table>
+{{ c.footer(r, 3) }}
+</section>

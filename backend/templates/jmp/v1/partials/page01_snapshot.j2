@@ -1,0 +1,88 @@
+{% import "partials/components.j2" as c %}
+<section class="page p1" data-page="1">
+{{ c.demo_marks(r) }}
+<div class="p1-head">
+  <div>
+    <div class="brand">{{ r.meta.company }}</div>
+    <div class="title">JOURNEY MANAGEMENT PLAN</div>
+    <div class="sub">Management Journey Snapshot</div>
+    <div class="route">{{ r.route.route_name }} &nbsp;|&nbsp; {{ r.route.region_label }}</div>
+  </div>
+  <div class="meta">
+    Journey ID: <b>{{ r.meta.journey_code }}</b><br>
+    Version: <b>{{ r.meta.version_label }}</b><br>
+    Region: <b>{{ r.route.states | join(' / ') or 'India' }}</b><br>
+    <span class="pill-summary">MANAGEMENT SUMMARY</span>
+  </div>
+</div>
+
+<div class="p1-top">
+  <div class="card map-card">
+    <div class="mt">ROUTE MAP — {{ r.route.waypoint_count }}-POINT {{ 'CIRCULAR LOOP' if r.route.is_round_trip else 'ROUTE' }}</div>
+    {{ svg.map_p1 }}
+  </div>
+  <div class="kpis">
+    <div class="kpi"><div class="k">{{ icon('route', 10) }} Distance</div><div class="v">{{ r.route.distance_range_km[0] }}–{{ r.route.distance_range_km[1] }} km</div><div class="s">Assessment basis</div></div>
+    <div class="kpi"><div class="k">{{ icon('clock', 10) }} Journey time</div><div class="v">{{ r.route.duration_range_min[0] | hm }}–<br>{{ r.route.duration_range_min[1] | hm }}</div><div class="s">Driving time · assessment basis</div></div>
+    <div class="kpi"><div class="k">{{ icon('pin', 10) }} Number of stops</div><div class="v">{{ r.route.waypoint_count }}</div><div class="s">{{ r.route.intermediate_stops }} intermediate stop{{ 's' if r.route.intermediate_stops != 1 }}{{ ' + return' if r.route.is_round_trip }}</div></div>
+    <div class="kpi"><div class="k">{{ icon('layers', 10) }} Complexity</div><div class="v">{{ r.route.complexity }}</div><div class="s">{{ r.route.road_type_count }} road type{{ 's' if r.route.road_type_count != 1 }}</div></div>
+    <div class="score-card">
+      <div class="k">{{ icon('gauge', 10, '#CEDFF4') }} JOURNEY SCORE</div>
+      <div class="row"><div class="v">{{ r.scores.total }}<small>/100</small></div><div class="bar"><i style="width:{{ r.scores.total }}%"></i></div></div>
+      <div class="s">Subject to Danone EHS validation</div>
+    </div>
+  </div>
+</div>
+
+<div class="statusline">OVERALL JOURNEY RISK: {{ r.scores.risk_level }} &nbsp;·&nbsp; FATIGUE: {{ r.scores.fatigue_level }}{% if '→' in r.scores.fatigue_trend %} (TREND {{ r.scores.fatigue_trend }}){% endif %} &nbsp;·&nbsp; DECISION: {{ r.scores.decision }}</div>
+{% set rb = {'LOW': 'l', 'MODERATE': 'm', 'MEDIUM': 'm', 'HIGH': 'h'}[r.scores.risk_level] %}
+<div class="riskbar"><div class="l {{ 'on' if rb == 'l' }}">LOW</div><div class="m {{ 'on' if rb == 'm' }}">MEDIUM</div><div class="h {{ 'on' if rb == 'h' }}">HIGH</div></div>
+
+<div class="p1-h">ROUTE EXPOSURES</div>
+<div class="exposures">
+{% for row in r.exposure_cards %}
+  <div class="exp">
+    <div class="top">{{ icon(hazard_icon[row.hazard.code], 13, '#1A396A') }}{{ c.pill(row.hazard.display_band) }}</div>
+    <div class="n">{{ row.display_name }}</div>
+    <div class="loc">{{ row.card_location }}</div>
+    <div class="d">{{ row.card_description }}</div>
+  </div>
+{% endfor %}
+</div>
+
+<div class="p1-bottom">
+  <div>
+    <div class="p1-h">RISK → REQUIRED CONTROL</div>
+    <table class="rc" style="width:100%;border-collapse:collapse">
+      <tr><th style="width:34%">KEY RISK</th><th>REQUIRED CONTROL ({{ r.route.travel.vehicle_type }})</th></tr>
+      {% for row in r.key_hazards %}
+      <tr><td class="band band-{{ row.hazard.display_band }}">{{ row.display_name }}</td><td>{{ row.hazard.short_control }}</td></tr>
+      {% endfor %}
+    </table>
+    <div class="p1-h">DRIVER READINESS</div>
+    <div class="readiness">
+      {% for key, label in [('before_departure', 'Before departure'), ('during_journey', 'During journey'), ('at_stops', 'Rest / at stops'), ('return_journey', 'Return / arrival')] %}
+      <div class="box"><div class="k">{{ label }}</div><div class="i">{{ r.narrative.driver_readiness[key] | join(' • ') }}</div></div>
+      {% endfor %}
+    </div>
+    <div class="p1-h">EMERGENCY RESPONSE</div>
+    <div class="er">
+      {% for p in r.emergency_protocols[:3] %}
+      <div class="box"><div class="k">{{ icon({'accident': 'alert', 'breakdown': 'wrench', 'medical': 'hospital'}.get(p.key, 'alert'), 10, '#fff') }} {{ p.title.split(' ')[0] }}</div><div class="s">{{ p.short | join(' → ') }}</div></div>
+      {% endfor %}
+    </div>
+    <div class="nums">
+      {% for row in r.emergency_directory if row.status == 'VERIFIED' %}
+      {% set parts = row.name.split(':') %}<div>{{ icon('phone', 10, '#1A396A') }} {{ parts[0] }}: <b>{{ parts[1] | trim }}</b></div>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="decision">
+    <div class="k">FINAL JOURNEY DECISION</div>
+    <div class="v">{{ icon('check', 17, '#896C00', 2.4) }} {{ r.scores.decision }}</div>
+    {{ svg.gauge }}
+    <div class="rf">Risk: {{ r.scores.risk_level }} &nbsp;|&nbsp; Fatigue: {{ r.scores.fatigue_level }}</div>
+    <div class="note">{{ r.narrative.decision_note_short }}</div>
+  </div>
+</div>
+</section>

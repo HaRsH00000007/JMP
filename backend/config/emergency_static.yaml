@@ -1,0 +1,27 @@
+# Fixed report content that is NOT produced by the LLM. Only VERIFIED numbers appear here.
+version: "1.0"
+verified_numbers:
+  - {type: "Emergency", name: "National Emergency: 112", location: "Pan-India", status: VERIFIED}
+  - {type: "Emergency", name: "Ambulance: 108", location: "Pan-India", status: VERIFIED}
+static_directory_rows:
+  - {type: "Roadside Assist.", name: "Company-empanelled / insurer helpline", location: "N/A", status: REQUIRES_VERIFICATION}
+protocols:
+  - {key: accident, title: "ACCIDENT", tone: red, steps: ["STOP", "SECURE", "CHECK", "EMERGENCY SERVICES", "MANAGER", "DOCUMENT"],
+     short: ["STOP", "SECURE", "CHECK", "SERVICES", "MANAGER"]}
+  - {key: breakdown, title: "BREAKDOWN", tone: amber, steps: ["SAFE LOCATION", "WARNING", "ROADSIDE ASSISTANCE", "MANAGER"],
+     short: ["SAFE LOCATION", "WARNING", "ASSISTANCE", "MANAGER"]}
+  - {key: medical, title: "MEDICAL EMERGENCY", tone: red, steps: ["SAFE LOCATION", "FIRST AID", "EMERGENCY SERVICE", "HOSPITAL", "MANAGER"],
+     short: ["SAFE LOCATION", "FIRST AID", "SERVICE", "HOSPITAL"]}
+  - {key: weather, title: "SEVERE WEATHER / FLOODING", tone: blue, steps: ["STOP/DETOUR", "AVOID HAZARD", "CONTACT MANAGER", "RESUME WHEN SAFE"],
+     short: ["STOP/DETOUR", "AVOID HAZARD", "MANAGER", "RESUME"]}
+directory_note: >-
+  112 and 108 are verified, pan-India operational numbers. Entries marked "REQUIRES VERIFICATION" must be
+  confirmed locally before travel — never rely on unverified contact details in an actual emergency.
+brand:                                   # D-14 — single client, brand strings in config
+  company: "DANONE INDIA"
+  company_title: "Danone India"
+  department: "Employee Health & Safety"
+  id_prefix: "DAN-JMP"
+  disclaimer: >-
+    This document is an AI-assisted Journey Management Plan prepared to support — not replace — formal
+    route surveys, local EHS approval, and Danone India travel-policy compliance.
