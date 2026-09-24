@@ -197,3 +197,22 @@ def test_a_journey_needs_two_located_stops(library, providers, db):
                       JourneyOptions(), providers, library, db, allow_unverified_stops=True)
     assert ei.value.code == ErrorCode.GEOCODE_NOT_FOUND
     assert len(ei.value.details["unverified"]) == 2
+
+
+def test_dropping_a_stop_does_not_strand_two_identical_ones(library, providers, db):
+    """"A, B, A" losing B becomes "A, A", which is not a journey — collapse it instead of failing the row.
+
+    Real itineraries also write the same place twice ("Pondicherry" then "Puducherry"), so the comparison is
+    by resolved position, not by spelling.
+    """
+    facts = compute_facts(["Zirakpur", "Mani Clinic, opposite old bus stand", "Zirakpur", "Lalru"],
+                          JourneyOptions(), providers, library, db, allow_unverified_stops=True)
+    assert [w.input_text for w in facts.route.waypoints] == ["Zirakpur", "Lalru"]
+    assert any("resolved to a point already on the route" in w for w in facts.route.provider_warnings)
+
+    # and when collapsing leaves nothing to measure, the row fails saying so
+    from app.errors import GeocodeError
+
+    with pytest.raises(GeocodeError, match="two distinct stops"):
+        compute_facts(["Zirakpur", "Mani Clinic, opposite old bus stand", "Zirakpur"],
+                      JourneyOptions(), providers, library, db, allow_unverified_stops=True)

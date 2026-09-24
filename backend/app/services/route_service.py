@@ -12,7 +12,7 @@ import hashlib
 import json
 from collections.abc import Callable, Sequence
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, TypeVar
+from typing import Any, NamedTuple, TypeVar
 
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -106,8 +106,15 @@ def geocode_all(texts: Sequence[str], providers: Providers, session: Session | N
     return [geocode_one(t, providers, session) for t in texts]
 
 
+class BestEffortGeocode(NamedTuple):
+    texts: list[str]                     # the stops that were located, in order
+    located: list[GeocodeResult]
+    unverified: list[UnverifiedStop]     # submitted but not found — printed verbatim, never given a position
+    collapsed: list[str]                 # located, but the same point as the stop before it
+
+
 def geocode_best_effort(texts: Sequence[str], providers: Providers, session: Session | None = None,
-                        ) -> tuple[list[str], list[GeocodeResult], list[UnverifiedStop]]:
+                        ) -> BestEffortGeocode:
     """Locate what can be located, and report the rest instead of failing the whole journey.
 
     A field visit is usually a chain of private clinics and shop names that no open gazetteer contains, so
@@ -132,13 +139,28 @@ def geocode_best_effort(texts: Sequence[str], providers: Providers, session: Ses
         except JmpError as exc:
             unverified.append(UnverifiedStop(kind=kind, input_text=t, reason=exc.message,
                                              error_code=str(exc.code)))
-    if len(kept) < 2:
-        located = ", ".join(repr(t) for t in kept_texts) or "none"
+    # Dropping a stop can leave two identical ones next to each other — "A, B, A" loses B and becomes
+    # "A, A", which is not a journey and which analyse_route rightly refuses. Itineraries also arrive with
+    # the same place written twice ("Pondicherry" then "Puducherry"). Collapse those here, by position
+    # rather than by spelling, so the run is not lost to a duplicate.
+    collapsed: list[str] = []
+    texts_out: list[str] = []
+    located_out: list[GeocodeResult] = []
+    for text, g in zip(kept_texts, kept, strict=True):
+        if located_out and geo.haversine((located_out[-1].lat, located_out[-1].lng), (g.lat, g.lng)) < 1:
+            collapsed.append(text)
+            continue
+        texts_out.append(text)
+        located_out.append(g)
+    if len(located_out) < 2:
+        found = ", ".join(repr(t) for t in texts_out) or "none"
+        extra = f"; {len(collapsed)} more resolved to a point already on the route" if collapsed else ""
         raise GeocodeError(
-            f"Cannot plan a journey: at least two stops must be located, {len(kept)} were ({located})",
+            f"Cannot plan a journey: at least two distinct stops must be located, {len(located_out)} were "
+            f"({found}){extra}",
             code=ErrorCode.GEOCODE_NOT_FOUND,
-            details={"unverified": [u.model_dump() for u in unverified]})
-    return kept_texts, kept, unverified
+            details={"unverified": [u.model_dump() for u in unverified], "same_point": collapsed})
+    return BestEffortGeocode(texts_out, located_out, unverified, collapsed)
 
 
 # ---------------------------------------------------------------------------------------- helpers

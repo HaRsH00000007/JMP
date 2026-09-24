@@ -43,9 +43,12 @@ def compute_facts(inputs: list[str], opts: JourneyOptions, providers: Providers,
                   session: Session | None = None, geocoded: list | None = None,
                   allow_unverified_stops: bool | None = None) -> JourneyFacts:
     unverified: list[UnverifiedStop] = []
+    collapsed: list[str] = []
     if geocoded is None:
         if allow_unverified_stops if allow_unverified_stops is not None else settings().allow_unverified_stops:
-            inputs, geocoded, unverified = geocode_best_effort(inputs, providers, session)
+            best = geocode_best_effort(inputs, providers, session)
+            inputs, geocoded, unverified = best.texts, best.located, best.unverified
+            collapsed = best.collapsed
         else:
             geocoded = geocode_all(inputs, providers, session)
     facts, route, fs, elev = analyse_route(
@@ -53,6 +56,10 @@ def compute_facts(inputs: list[str], opts: JourneyOptions, providers: Providers,
         vehicle_type_specified=opts.vehicle_type_specified, travel_date=opts.travel_date,
         depart_time=opts.depart_time, session=session)
     hazards, not_applicable, verification = run_hazard_engine(library, facts, route, fs, elev)
+    if collapsed:
+        facts.provider_warnings.append(
+            f"{len(collapsed)} stop(s) resolved to a point already on the route and were merged: "
+            + ", ".join(collapsed))
     if unverified:
         # The journey is measured through the located stops only, so say so where it cannot be missed: on
         # the route facts (printed verbatim) and at the top of the before-travel verification list.
