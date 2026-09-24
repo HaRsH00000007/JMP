@@ -79,6 +79,34 @@ _NOMINATIM_RL = _RateLimiter(1.1)
 # overpass-api.de publishes a 2-slot-per-IP limit (see /api/status). Exceeding it means queued or rejected
 # queries, which in a bulk run shows up as everything crawling. Gate ourselves to stay inside it.
 _OVERPASS_SLOTS = threading.Semaphore(2)
+# Open-Meteo's free tier is rate limited per minute, and a long route is fetched in 100-point chunks, so a
+# handful of concurrent bulk workers trip it in seconds — that is what failed 9 rows of the 1-40 run with
+# HTTP 429. One elevation request at a time, spaced, keeps a whole batch inside the limit.
+_ELEVATION_RL = _RateLimiter(0.7)
+_ELEVATION_SLOT = threading.Semaphore(1)
+
+
+def _overpass_json(client: HttpMixin, query: str, *, attempts: int = 2) -> dict[str, Any]:
+    """POST an Overpass query, moving to the next configured mirror when a server is down or overloaded.
+
+    Individual Overpass instances go offline or shed load routinely. With one endpoint the road-feature
+    stage was a single point of failure: it lost row R011 of the 1-40 run to a server that was simply busy
+    at that minute. Mirrors run the same API over the same data, so a retry elsewhere is equivalent.
+    """
+    s = settings()
+    urls: list[str] = []
+    for u in [s.overpass_url, *s.overpass_fallback_urls]:
+        if u and u not in urls:
+            urls.append(u)
+    last: Exception | None = None
+    for url in urls:
+        with _OVERPASS_SLOTS:
+            try:
+                return client.request_json("POST", url, data={"data": query}, attempts=attempts,
+                                           max_backoff_s=20.0)
+            except ProviderError as exc:
+                last = exc
+    raise last or ProviderError("Overpass unavailable: no endpoint configured")
 
 
 class NominatimGeocoder(HttpMixin):
@@ -304,8 +332,7 @@ out tags geom;
 node(around:3000,{line})[place~"^(city|town|suburb|village|neighbourhood)$"];
 out body;
 """
-        with _OVERPASS_SLOTS:
-            data = self.request_json("POST", settings().overpass_url, data={"data": query}, attempts=3)
+        data = _overpass_json(self, query, attempts=3)
         elements = data.get("elements", [])
         idx = geo.RouteIndex(coords)
         roads = [e for e in elements if e["type"] == "way" and "highway" in e.get("tags", {})]
@@ -415,8 +442,7 @@ class OverpassPlacesProvider(HttpMixin):
     def nearby(self, point: Coord, kind: PlaceKind, radius_m: int) -> list[Place]:
         q = (f'[out:json][timeout:30];nwr(around:{radius_m},{point[0]:.5f},{point[1]:.5f})'
              f'[amenity={self._AMENITY[kind]}];out center tags 20;')
-        with _OVERPASS_SLOTS:
-            data = self.request_json("POST", settings().overpass_url, data={"data": q})
+        data = _overpass_json(self, q)
         out = []
         for e in data.get("elements", []):
             lat = e.get("lat") or e.get("center", {}).get("lat")
@@ -439,7 +465,12 @@ class OpenMeteoElevation(HttpMixin):
             chunk = samples[i:i + 100]
             params = {"latitude": ",".join(f"{c[0]:.5f}" for _, c in chunk),
                       "longitude": ",".join(f"{c[1]:.5f}" for _, c in chunk)}
-            data = self.request_json("GET", settings().open_meteo_url, params=params)
+            # Elevation is per-minute rate limited, so a 429 is a "wait", not an outage: retry it patiently
+            # rather than failing the journey.
+            with _ELEVATION_SLOT:
+                _ELEVATION_RL.wait()
+                data = self.request_json("GET", settings().open_meteo_url, params=params,
+                                         attempts=5, max_backoff_s=30.0)
             elev = data.get("elevation")
             if not isinstance(elev, list) or len(elev) != len(chunk):
                 raise ProviderError("Open-Meteo returned an unexpected elevation payload")

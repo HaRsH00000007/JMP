@@ -31,6 +31,7 @@ os.environ.update({
     # pinned so the suite does not depend on the developer's .env
     "REPORT_DEMO_WATERMARK": "true",
     "TEMPLATE_VERSION": "1.1",
+    "OUTPUT_FOLDER": "",
     "ANTHROPIC_API_KEY": "",
     "API_AUTH_TOKEN": "",
 })

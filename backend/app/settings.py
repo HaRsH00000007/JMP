@@ -58,6 +58,10 @@ class Settings(BaseSettings):
     osrm_base_url: str = "https://router.project-osrm.org"
     nominatim_base_url: str = "https://nominatim.openstreetmap.org"
     overpass_url: str = "https://overpass-api.de/api/interpreter"
+    # Mirrors tried in order when the primary is down or shedding load. Same API, same data.
+    overpass_fallback_urls_csv: str = Field(
+        default="https://overpass.kumi.systems/api/interpreter,https://overpass.private.coffee/api/interpreter",
+        validation_alias="OVERPASS_FALLBACK_URLS")
     open_meteo_url: str = "https://api.open-meteo.com/v1/elevation"
     provider_user_agent: str = "JMP-Generator/1.0 (EHS journey planning)"
     provider_timeout_s: float = 30.0
@@ -97,10 +101,18 @@ class Settings(BaseSettings):
     # deliberate reason (e.g. internal layout previews).
     report_demo_watermark: bool = True
     pdf_render_timeout_ms: int = 60000
+    # Pins the output subfolder (e.g. "2026/23_9_26") instead of deriving it from today's date, so the rest
+    # of a batch started on an earlier day is delivered alongside the documents already produced. Empty =
+    # group by the run date, which is what you want normally.
+    output_folder: str = ""
 
     @property
     def cors_origins(self) -> list[str]:
         return [o.strip() for o in self.cors_origins_csv.split(",") if o.strip()]
+
+    @property
+    def overpass_fallback_urls(self) -> list[str]:
+        return [u.strip() for u in self.overpass_fallback_urls_csv.split(",") if u.strip()]
 
     @property
     def is_sqlite(self) -> bool:

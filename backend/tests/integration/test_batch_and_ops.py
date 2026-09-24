@@ -196,3 +196,32 @@ def test_cached_commits_in_its_own_transaction(db):
     with session_scope() as s:                      # and it really is a cache
         cached(s, "geocode", "cachetest", "probe-a", GeocodeResult, provider)
     assert len(calls) == 1
+
+
+def test_output_folder_override_pins_the_run_folder():
+    """A batch finished on a later day must still be delivered beside the PDFs already produced."""
+    from app.storage import date_prefix
+
+    assert re.fullmatch(r"\d{4}/\d{2}_\d{2}_\d{2}", date_prefix())
+    set_settings(get_settings().model_copy(update={"output_folder": "2026/23_9_26"}))
+    try:
+        assert date_prefix() == "2026/23_9_26"
+    finally:
+        set_settings(None)
+
+
+def test_bulk_document_filename_carries_its_csv_row(db):
+    """Bulk PDFs are named "<route_id>_<journey code>_<id>.pdf" so a delivered folder reconciles against the
+    uploaded sheet row by row, and a row that produced nothing shows up as a gap in the sequence."""
+    from app.db.models import JmpDocument
+
+    data = b"route_id,start_location,end_location\nR041,Zirakpur,Lalru\n"
+    with session_scope() as s:
+        bid = bulk.create_bulk_job(s, parse_csv(data), filename="n.csv", csv_bytes=data).id
+    bulk.start(bid)
+    with session_scope() as s:
+        item = s.scalars(select(BulkJobItem).where(BulkJobItem.bulk_job_id == bid)).one()
+        assert item.status == "succeeded", item.error_message
+        doc = s.get(JmpDocument, item.document_id)
+        name = doc.pdf_path.rsplit("/", 1)[-1]
+        assert name.startswith(f"R041_{doc.document_code}_"), name

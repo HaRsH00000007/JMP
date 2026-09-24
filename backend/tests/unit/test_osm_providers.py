@@ -110,3 +110,65 @@ def test_geocode_all_rejects_low_confidence(monkeypatch):
     with pytest.raises(JmpError) as ei:
         geocode_all(["Apex Hospital, Agra"], SimpleNamespace(geocoder=fake))
     assert ei.value.code == ErrorCode.GEOCODE_AMBIGUOUS
+
+
+# --------------------------------------------------- resilience: rate limits and mirror failover
+def test_retry_after_is_honoured_over_the_backoff_guess(monkeypatch):
+    """A 429 carries how long to wait; retrying sooner just burns the remaining attempts.
+
+    Open-Meteo rate-limited 9 rows of a 40-row run into failure because the retries all landed inside the
+    same one-minute window.
+    """
+    import httpx
+
+    from app.providers.base import HttpMixin
+
+    slept: list[float] = []
+    codes = iter([429, 200])
+
+    class Client:
+        def request(self, method, url, **kw):
+            code = next(codes)
+            return httpx.Response(code, headers={"Retry-After": "12"} if code == 429 else {},
+                                 json={"ok": True}, request=httpx.Request(method, url))
+
+    monkeypatch.setattr(HttpMixin, "http", lambda self: Client())
+    monkeypatch.setattr("app.providers.base.time.sleep", lambda s: slept.append(s))
+    assert HttpMixin().request_json("GET", "https://x.test/e", max_backoff_s=30.0) == {"ok": True}
+    assert slept == [12.0], "waited on its own guess instead of the server's Retry-After"
+
+
+def test_elevation_retries_a_rate_limit_instead_of_failing(monkeypatch):
+    calls = []
+
+    def fake(self, method, url, **kw):
+        calls.append(kw)
+        return {"elevation": [10.0] * len(kw["params"]["latitude"].split(","))}
+
+    monkeypatch.setattr(osm.OpenMeteoElevation, "request_json", fake)
+    monkeypatch.setattr(osm._ELEVATION_RL, "min_interval", 0)
+    prof = osm.OpenMeteoElevation().profile([(30.0, 76.0), (30.5, 76.5)], 5000)
+    assert prof.samples and calls[0]["attempts"] >= 5 and calls[0]["max_backoff_s"] >= 30
+
+
+def test_overpass_falls_back_to_a_mirror_when_the_primary_is_down(monkeypatch):
+    """One Overpass endpoint made the whole road-feature stage a single point of failure (lost row R011)."""
+    from app.errors import ProviderError
+    from app.settings import get_settings, set_settings
+
+    tried: list[str] = []
+
+    def fake(self, method, url, **kw):
+        tried.append(url)
+        if "primary.test" in url:
+            raise ProviderError("HTTP 504")
+        return {"elements": []}
+
+    monkeypatch.setattr(osm.OverpassPlacesProvider, "request_json", fake)
+    set_settings(get_settings().model_copy(update={
+        "overpass_url": "https://primary.test/api", "overpass_fallback_urls_csv": "https://mirror.test/api"}))
+    try:
+        assert osm.OverpassPlacesProvider().nearby((30.0, 76.0), "hospital", 5000) == []
+    finally:
+        set_settings(None)
+    assert tried == ["https://primary.test/api", "https://mirror.test/api"]

@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 
 from app import rules_config
 from app.db.models import (
+    BulkJobItem,
     GenerationJob,
     GenerationUsage,
     Hazard,
@@ -212,6 +213,16 @@ def _options(j: Journey) -> JourneyOptions:
                           nearest_police=j.nearest_police)
 
 
+def fs_safe(text: str) -> str:
+    return "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in text)[:60]
+
+
+def bulk_route_ref(db: Session, journey_id: uuid.UUID) -> str | None:
+    """The route_id of the uploaded CSV row this journey came from, or None if it was generated individually."""
+    item_id = db.scalar(select(Journey.bulk_job_item_id).where(Journey.id == journey_id))
+    return db.scalar(select(BulkJobItem.route_ref).where(BulkJobItem.id == item_id)) if item_id else None
+
+
 def _assign_code(db: Session, journey: Journey, jf: JourneyFacts) -> str:
     if journey.journey_code:
         return journey.journey_code
@@ -332,8 +343,6 @@ def record_usage(job_id: uuid.UUID, journey_id: uuid.UUID, bulk_job_id: uuid.UUI
 def _bulk_job_id_for(db: Session, job: GenerationJob) -> uuid.UUID | None:
     if job.bulk_job_item_id is None:
         return None
-    from app.db.models import BulkJobItem
-
     item = db.get(BulkJobItem, job.bulk_job_item_id)
     return item.bulk_job_id if item else None
 
@@ -386,6 +395,9 @@ def stage_render(job_id: uuid.UUID, attempt: int = 1) -> str | None:
         source, model = nj.get("source", "anthropic"), nj.get("model", settings().anthropic_model)
         code = journey.journey_code or "DAN-JMP-XX-000"
         journey_id, item_id = journey.id, job.bulk_job_item_id
+        # A bulk document is named after its CSV row as well as its journey code, so a delivered folder can
+        # be reconciled against the uploaded sheet row by row (and a missing row is visible as a gap).
+        route_ref = db.get(BulkJobItem, item_id).route_ref if item_id else None
     versions = current_versions(jf.hazard_library_version)
     report = build_report(jf, narrative, journey_code=code, versions=versions, narrative_source=source, model=model,
                           pointer_count=settings().hazard_pointer_count)
@@ -394,7 +406,8 @@ def stage_render(job_id: uuid.UUID, attempt: int = 1) -> str | None:
     doc_id = uuid.uuid4()
     now = utcnow()
     storage = get_storage()
-    base = f"documents/{date_prefix(now)}/{code}_{doc_id.hex[:8]}"
+    stem = f"{fs_safe(route_ref)}_{code}" if route_ref else code
+    base = f"documents/{date_prefix(now)}/{stem}_{doc_id.hex[:8]}"
     html_key = storage.put_bytes(base + ".html", html.encode("utf-8"), "text/html; charset=utf-8")
     pdf_key = storage.put_bytes(base + ".pdf", pdf.pdf, "application/pdf")
     total_ms = int((time.monotonic() - t0) * 1000)

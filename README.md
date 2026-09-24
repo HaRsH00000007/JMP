@@ -24,6 +24,8 @@ Journey input ─▶ geocode ─▶ route ─▶ road features / elevation ─�
 * **Individual JMP** — a start, up to 13 stops and an end produce one JMP PDF.
 * **Bulk JMP** — a CSV of hundreds of journeys is validated, processed row-by-row in the background, and
   delivered as a ZIP with all PDFs plus CSV / XLSX / JSON manifests. One failed row never stops the batch.
+  Each PDF is named `<route_id>_<journey code>_<id>.pdf`, so a delivered folder reconciles against the
+  uploaded sheet row by row and a row that produced nothing shows up as a gap.
 * **Forms import** — converts a Microsoft Forms "High Risk Routes" export into the bulk CSV, expanding the
   repeating route blocks and verifying every address against the geocoder first.
 * **Fixed report** — 8 A4 pages, including a route hazard-pointer page drawn from measured positions.

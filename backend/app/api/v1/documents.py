@@ -12,6 +12,7 @@ from sqlalchemy import func, or_, select
 from app.db.models import AuditEvent, BulkJobItem, GenerationUsage, JmpDocument
 from app.db.session import session_scope
 from app.errors import NotFoundError
+from app.services.jobs import bulk_route_ref, fs_safe
 from app.services.pipeline import render_document
 from app.services.report_assembler import ReportModel
 from app.settings import settings
@@ -116,6 +117,7 @@ def rerender(doc_id: uuid.UUID) -> dict[str, Any]:
     with session_scope() as db:
         d = _get(db, doc_id)
         report = ReportModel.model_validate(d.report_json)
+        route_ref = bulk_route_ref(db, d.journey_id)
         base = {k: getattr(d, k) for k in ("journey_id", "generation_job_id", "document_code", "route_name", "region",
                                            "risk_level", "decision", "journey_score", "search_text", "narrative_json",
                                            "hazard_library_version", "prompt_version", "schema_version",
@@ -126,7 +128,10 @@ def rerender(doc_id: uuid.UUID) -> dict[str, Any]:
     new_id = uuid.uuid4()
     now = datetime.now(timezone.utc)
     st = get_storage()
-    prefix = f"documents/{date_prefix(now)}/{base['document_code']}_{new_id.hex[:8]}"
+    # Keep the CSV route id in the name, or a re-render would quietly break the row-by-row reconciliation
+    # the bulk naming exists for.
+    stem = f"{fs_safe(route_ref)}_{base['document_code']}" if route_ref else base["document_code"]
+    prefix = f"documents/{date_prefix(now)}/{stem}_{new_id.hex[:8]}"
     html_key = st.put_bytes(prefix + ".html", html.encode(), "text/html; charset=utf-8")
     pdf_key = st.put_bytes(prefix + ".pdf", pdf.pdf, "application/pdf")
     with session_scope() as db:

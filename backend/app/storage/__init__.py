@@ -27,9 +27,16 @@ def date_prefix(when: "datetime | None" = None) -> str:
 
     Grouping by day keeps one bulk run's documents together and makes retention/cleanup obvious.
     Stored paths are absolute in the database, so changing this only affects new files.
+
+    OUTPUT_FOLDER overrides it outright. That exists because a set of documents belonging to one exercise
+    can be finished on a later day — continuing a partly generated batch has to keep landing beside the
+    PDFs already delivered, not start a folder for today.
     """
     from datetime import datetime, timezone
 
+    override = settings().output_folder.strip().strip("/")
+    if override:
+        return override
     d = when or datetime.now(timezone.utc)
     return f"{d:%Y}/{d:%d_%m_%y}"
 

@@ -78,6 +78,8 @@ change behaviour most:
 | `HAZARD_POINTER_COUNT` | `5` | Hazards on the pointer page (3–8) |
 | `USD_TO_INR` | `88.0` | FX rate used for INR cost reporting |
 | `REPORT_DEMO_WATERMARK` | `true` | Prints the DEMO banner when route data or narrative is mocked. Hiding it does not change what the document records |
+| `OVERPASS_FALLBACK_URLS` | two public mirrors | Tried in order when the primary Overpass server is down or shedding load |
+| `OUTPUT_FOLDER` | empty | Pins the output subfolder (e.g. `2026/23_9_26`) instead of using the run date — see below |
 
 ### Provider profiles (D-09)
 
@@ -111,6 +113,26 @@ Verified working against the public endpoints. Two caveats:
   `OSRM_BASE_URL`, `NOMINATIM_BASE_URL` and `OVERPASS_URL` at them (see [deployment.md](deployment.md)).
 * Nominatim rejects placeholder user agents (anything with `example.com`). Put a real contact in
   `PROVIDER_USER_AGENT`, as their usage policy requires.
+
+The public endpoints also enforce limits that only show up under bulk load, so the providers gate
+themselves to stay inside them: Nominatim is serialised to one request per 1.1 s, Overpass to the two
+concurrent slots that `overpass-api.de` publishes, and Open-Meteo elevation to one request at a time.
+Elevation is additionally retried patiently (5 attempts, honouring `Retry-After`) because its limit is
+per-minute — a 429 there means *wait*, not *unavailable*. Overpass failures move to the next mirror in
+`OVERPASS_FALLBACK_URLS` before the row is failed.
+
+### Output folders
+
+Documents are stored under `documents/<YYYY>/<DD_MM_YY>/` and one bulk run's files under
+`bulk/<YYYY>/<DD_MM_YY>/<job id>/`, so a day's output stays together. A bulk PDF is named
+`<route_id>_<journey code>_<id>.pdf` — the `route_id` is the one from the uploaded CSV, so a delivered
+folder can be reconciled against the sheet row by row and a row that produced nothing is visible as a gap
+in the sequence. Documents generated individually have no CSV row, so they are named
+`<journey code>_<id>.pdf`.
+
+Set `OUTPUT_FOLDER=2026/23_9_26` to finish a batch that was started on an earlier day: the remaining
+documents are then delivered into that same folder instead of one named for today. Leave it empty
+otherwise. Paths are stored per document in the database, so changing it never affects existing files.
 
 **Commercial** — Google or Mapbox for geocoding and routing (a key is needed; OSM still supplies road
 features and elevation):

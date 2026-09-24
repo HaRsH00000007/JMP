@@ -34,10 +34,19 @@ Set real providers and an API key; see [setup.md](setup.md) §3.
 **Nominatim returns 403.** Their policy rejects placeholder user agents. Put a real contact in
 `PROVIDER_USER_AGENT` (anything containing `example.com` is blocked).
 
-**Overpass is very slow (100 s+) or returns 429.** The public endpoint is shared and rate-limited. Self-host
-Overpass for production, or set `FEATURE_PROVIDER=none` to run without OSM road features — the report then
-relies on provider road names only, and hazards that need features will not be detected (they appear as
-verification items instead).
+**Overpass is very slow (100 s+) or returns 429.** The public endpoint is shared and rate-limited, and the
+client keeps itself inside the two concurrent slots `overpass-api.de` publishes, so concurrent rows queue.
+When a server is down or shedding load the next mirror in `OVERPASS_FALLBACK_URLS` is tried before the row
+fails. Self-host Overpass for production, or set `FEATURE_PROVIDER=none` to run without OSM road features —
+the report then relies on provider road names only, and hazards that need features will not be detected
+(they appear as verification items instead).
+
+**Many bulk rows fail with `PROVIDER_UNAVAILABLE` naming Open-Meteo.** Its free tier is limited per minute
+and a long route is fetched in 100-point chunks, so several workers together trip it within seconds. The
+client serialises elevation requests, spaces them, and retries a 429 for up to 5 attempts honouring
+`Retry-After`. If it still fails, the limit is being shared with something else on the same IP: run the
+batch in smaller pieces, or set `ELEVATION_PROVIDER=none` (gradient hazards then become verification items
+rather than measured findings).
 
 **`cache_read_input_tokens` stays 0 across requests.** The cached prefix is being invalidated. It is
 byte-stable by construction (a test asserts it), so check: the model changed, `ANTHROPIC_EFFORT` changed,
