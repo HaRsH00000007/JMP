@@ -30,11 +30,12 @@ from app.domain.facts import (
     RouteFacts,
     Segment,
     TravelContext,
+    UnverifiedStop,
     Waypoint,
 )
 from app.domain.route import ElevationProfile, FeatureSet, GeocodeResult, RouteResult
 from app.domain.solar import fmt_hhmm, local_sun_times
-from app.errors import ErrorCode, GeocodeError, RouteError
+from app.errors import ErrorCode, GeocodeError, JmpError, RouteError
 from app.observability.logging import get_logger
 from app.providers.osm import categorize
 from app.providers.registry import Providers
@@ -91,16 +92,53 @@ def cached(session: Session | None, kind: str, provider: str, parts: Any, model:
 
 
 # --------------------------------------------------------------------------------------- geocoding
+def geocode_one(text: str, providers: Providers, session: Session | None = None) -> GeocodeResult:
+    g = cached(session, "geocode", providers.geocoder.name, text.strip().lower(), GeocodeResult,
+               lambda: providers.geocoder.geocode(text))
+    if g.confidence < 0.5:
+        raise GeocodeError(f"Low-confidence location: {text!r}", code=ErrorCode.GEOCODE_AMBIGUOUS,
+                           details={"candidates": g.candidates})
+    return g
+
+
 def geocode_all(texts: Sequence[str], providers: Providers, session: Session | None = None) -> list[GeocodeResult]:
-    out: list[GeocodeResult] = []
-    for t in texts:
-        g = cached(session, "geocode", providers.geocoder.name, t.strip().lower(), GeocodeResult,
-                   lambda t=t: providers.geocoder.geocode(t))
-        if g.confidence < 0.5:
-            raise GeocodeError(f"Low-confidence location: {t!r}", code=ErrorCode.GEOCODE_AMBIGUOUS,
-                               details={"candidates": g.candidates})
-        out.append(g)
-    return out
+    """Locate every stop, or fail the journey. Nothing is planned on a location we could not verify."""
+    return [geocode_one(t, providers, session) for t in texts]
+
+
+def geocode_best_effort(texts: Sequence[str], providers: Providers, session: Session | None = None,
+                        ) -> tuple[list[str], list[GeocodeResult], list[UnverifiedStop]]:
+    """Locate what can be located, and report the rest instead of failing the whole journey.
+
+    A field visit is usually a chain of private clinics and shop names that no open gazetteer contains, so
+    insisting on every stop throws away the whole route over one address. This keeps the journey: the
+    stops that resolved are returned for routing, and the ones that did not come back as UnverifiedStop,
+    to be printed verbatim and verified before travel. No coordinate is ever invented for them.
+
+    Two located stops are enough to measure a route, so a journey can survive losing its submitted start or
+    end — the plan is then measured between the stops that were found, and the missing end of the itinerary
+    is listed as unverified. That is a real limitation of such a plan, which is why it is printed on the
+    document rather than only recorded here.
+    """
+    kept_texts: list[str] = []
+    kept: list[GeocodeResult] = []
+    unverified: list[UnverifiedStop] = []
+    last = len(texts) - 1
+    for i, t in enumerate(texts):
+        kind = "start" if i == 0 else ("end" if i == last else "stop")
+        try:
+            kept.append(geocode_one(t, providers, session))
+            kept_texts.append(t)
+        except JmpError as exc:
+            unverified.append(UnverifiedStop(kind=kind, input_text=t, reason=exc.message,
+                                             error_code=str(exc.code)))
+    if len(kept) < 2:
+        located = ", ".join(repr(t) for t in kept_texts) or "none"
+        raise GeocodeError(
+            f"Cannot plan a journey: at least two stops must be located, {len(kept)} were ({located})",
+            code=ErrorCode.GEOCODE_NOT_FOUND,
+            details={"unverified": [u.model_dump() for u in unverified]})
+    return kept_texts, kept, unverified
 
 
 # ---------------------------------------------------------------------------------------- helpers

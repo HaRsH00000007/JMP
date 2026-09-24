@@ -265,6 +265,27 @@ def _line_arg(coords: Sequence[Coord], max_points: int = 400) -> str:
     return ",".join(f"{lat:.5f},{lng:.5f}" for lat, lng in pts)
 
 
+# Points per Overpass request. The line is repeated in every clause of the query, so this — not the route
+# length — is what decides how big the request is. Overpass's `around` follows the linestring, so splitting
+# the route across requests loses no coverage; the chunks overlap by one point so nothing falls in a gap.
+_OVERPASS_CHUNK_POINTS = 60
+
+
+def _line_chunks(coords: Sequence[Coord], max_points: int = _OVERPASS_CHUNK_POINTS) -> list[str]:
+    """The route as one or more `around:` linestring arguments, each small enough to answer quickly."""
+    pts = geo.douglas_peucker(list(coords), 15.0)
+    if len(pts) > 8 * max_points:  # very long route: thin it before chunking, or we issue dozens of queries
+        step = math.ceil(len(pts) / (8 * max_points))
+        pts = pts[::step] + [pts[-1]]
+    out = []
+    for i in range(0, max(1, len(pts) - 1), max_points - 1):
+        chunk = pts[i:i + max_points]
+        if len(chunk) == 1 and out:
+            break
+        out.append(",".join(f"{lat:.5f},{lng:.5f}" for lat, lng in chunk))
+    return out or [",".join(f"{lat:.5f},{lng:.5f}" for lat, lng in pts)]
+
+
 def _point_in_polygon(p: Coord, poly: Sequence[Coord]) -> bool:
     x, y = p[1], p[0]
     inside = False
@@ -310,13 +331,9 @@ _PLACE_RADIUS_M = {"city": 4000, "town": 2000, "suburb": 1000, "village": 500, "
 class OverpassFeatureProvider(HttpMixin):
     name = "overpass"
 
-    def features_along(self, polyline: Sequence[Coord]) -> FeatureSet:
-        rules = hazard_rules()
-        samp = rules["sampling"]
-        coords = [tuple(p) for p in polyline]
-        line = _line_arg(coords)
-        fb, ab = samp["feature_buffer_m"], samp["area_buffer_m"]
-        query = f"""[out:json][timeout:90];
+    @staticmethod
+    def _query(line: str, fb: int, ab: int) -> str:
+        return f"""[out:json][timeout:90];
 way(around:{fb},{line})[highway];
 out tags geom;
 node(around:{fb},{line})[railway=level_crossing];
@@ -336,8 +353,25 @@ out tags geom;
 node(around:3000,{line})[place~"^(city|town|suburb|village|neighbourhood)$"];
 out body;
 """
-        data = _overpass_json(self, query)
-        elements = data.get("elements", [])
+
+    def features_along(self, polyline: Sequence[Coord]) -> FeatureSet:
+        rules = hazard_rules()
+        samp = rules["sampling"]
+        coords = [tuple(p) for p in polyline]
+        fb, ab = samp["feature_buffer_m"], samp["area_buffer_m"]
+        # One query per stretch of route, not one query for the whole thing. The polyline is repeated in all
+        # nine clauses, so a long route built a 39 KB query that every public server read-timed out on —
+        # a 146 km route failed 100% of the time. Several small queries each answer in seconds.
+        elements: list[dict[str, Any]] = []
+        seen: set[tuple[Any, Any]] = set()
+        for chunk in _line_chunks(coords):
+            data = _overpass_json(self, self._query(chunk, fb, ab))
+            for e in data.get("elements", []):
+                key = (e.get("type"), e.get("id"))
+                if key in seen:
+                    continue  # chunks overlap by a point, and areas span several
+                seen.add(key)
+                elements.append(e)
         idx = geo.RouteIndex(coords)
         roads = [e for e in elements if e["type"] == "way" and "highway" in e.get("tags", {})]
         areas = [e for e in elements if e["type"] == "way" and "highway" not in e.get("tags", {})]

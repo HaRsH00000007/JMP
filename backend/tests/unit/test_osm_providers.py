@@ -172,3 +172,38 @@ def test_overpass_falls_back_to_a_mirror_when_the_primary_is_down(monkeypatch):
     finally:
         set_settings(None)
     assert tried == ["https://primary.test/api", "https://mirror.test/api"]
+
+
+def test_features_query_is_split_so_it_stays_answerable(monkeypatch):
+    """A long route must not become one enormous query.
+
+    The polyline is repeated in all nine clauses, so a 146 km route built a 39 KB query that every public
+    Overpass server read-timed out on — that route failed 100% of the time. Split into stretches it
+    succeeds, and `around` follows the linestring so no coverage is lost.
+    """
+    import math
+
+    sizes: list[int] = []
+
+    def fake(self, method, url, **kw):
+        sizes.append(len(kw["data"]["data"]))
+        return {"elements": []}
+
+    monkeypatch.setattr(osm.OverpassFeatureProvider, "request_json", fake)
+    curvy = [(15.8 + i * 0.0008 + 0.002 * math.sin(i / 3), 78.0 + i * 0.0005 + 0.002 * math.cos(i / 2.7))
+             for i in range(1700)]
+    osm.OverpassFeatureProvider().features_along(curvy)
+    assert len(sizes) > 1, "still sending the whole route as a single query"
+    assert max(sizes) < 12_000, f"a chunk is still too large: {max(sizes)} bytes"
+
+
+def test_features_are_merged_across_chunks_without_duplicates(monkeypatch):
+    """Chunks overlap by a point and areas span several, so the same element comes back more than once."""
+    way = {"type": "way", "id": 1, "tags": {"highway": "trunk", "ref": "NH44"},
+           "geometry": [{"lat": 15.8, "lon": 78.0}, {"lat": 15.9, "lon": 78.1}]}
+    node = {"type": "node", "id": 2, "lat": 15.85, "lon": 78.05, "tags": {"traffic_calming": "bump"}}
+    monkeypatch.setattr(osm.OverpassFeatureProvider, "request_json",
+                        lambda self, m, u, **kw: {"elements": [way, node]})
+    monkeypatch.setattr(osm, "_line_chunks", lambda coords, max_points=60: ["a", "b", "c"])
+    fs = osm.OverpassFeatureProvider().features_along([(15.8, 78.0), (15.9, 78.1)])
+    assert sum(1 for f in fs.features if f.kind == "traffic_calming") == 1

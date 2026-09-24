@@ -32,6 +32,7 @@ os.environ.update({
     "REPORT_DEMO_WATERMARK": "true",
     "TEMPLATE_VERSION": "1.1",
     "OUTPUT_FOLDER": "",
+    "ALLOW_UNVERIFIED_STOPS": "false",
     "ANTHROPIC_API_KEY": "",
     "API_AUTH_TOKEN": "",
 })

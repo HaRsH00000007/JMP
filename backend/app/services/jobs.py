@@ -260,7 +260,13 @@ def stage_analyse(job_id: uuid.UUID, attempt: int = 1) -> str | None:
         journey = db.get(Journey, job.journey_id)  # type: ignore[union-attr]
         assert job is not None and journey is not None
         stops = sorted(journey.stops, key=lambda s: s.seq)
-        for st, w in zip(stops, jf.route.waypoints, strict=True):
+        # Not a positional zip: when unverified stops are allowed the route covers only the located ones, so
+        # there are fewer waypoints than submitted stops. Match on the text that was submitted.
+        by_text = {w.input_text: w for w in jf.route.waypoints}
+        for st in stops:
+            w = by_text.get(st.raw_text)
+            if w is None:
+                continue  # submitted but not located; recorded in route.unverified_stops and on page 2
             st.geocoded_name, st.lat, st.lng = w.name, w.lat, w.lng
             st.admin_area = {"state": w.state, "district": w.district, "locality": w.locality}
             st.place_types, st.geocode_confidence, st.provider = w.place_types, w.geocode_confidence, w.geocode_provider

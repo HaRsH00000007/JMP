@@ -12,7 +12,7 @@ from datetime import date
 
 from sqlalchemy.orm import Session
 
-from app.domain.facts import JourneyFacts
+from app.domain.facts import JourneyFacts, UnverifiedStop, VerificationItem
 from app.llm.schemas import NarrativeV1
 from app.providers.registry import Providers
 from app.rendering.html_renderer import render_html
@@ -21,8 +21,9 @@ from app.services.emergency import build_emergency
 from app.services.hazard_engine import run_hazard_engine
 from app.services.hazard_library import HazardLibrary
 from app.services.report_assembler import ReportModel, assemble_report
-from app.services.route_service import analyse_route, geocode_all
+from app.services.route_service import analyse_route, geocode_all, geocode_best_effort
 from app.services.scoring import compute_scores
+from app.settings import settings
 from app.versions import VersionStamp
 
 
@@ -39,13 +40,33 @@ class JourneyOptions:
 
 
 def compute_facts(inputs: list[str], opts: JourneyOptions, providers: Providers, library: HazardLibrary,
-                  session: Session | None = None, geocoded: list | None = None) -> JourneyFacts:
-    geocoded = geocoded or geocode_all(inputs, providers, session)
+                  session: Session | None = None, geocoded: list | None = None,
+                  allow_unverified_stops: bool | None = None) -> JourneyFacts:
+    unverified: list[UnverifiedStop] = []
+    if geocoded is None:
+        if allow_unverified_stops if allow_unverified_stops is not None else settings().allow_unverified_stops:
+            inputs, geocoded, unverified = geocode_best_effort(inputs, providers, session)
+        else:
+            geocoded = geocode_all(inputs, providers, session)
     facts, route, fs, elev = analyse_route(
         inputs=inputs, geocoded=geocoded, providers=providers, vehicle_type=opts.vehicle_type,
         vehicle_type_specified=opts.vehicle_type_specified, travel_date=opts.travel_date,
         depart_time=opts.depart_time, session=session)
     hazards, not_applicable, verification = run_hazard_engine(library, facts, route, fs, elev)
+    if unverified:
+        # The journey is measured through the located stops only, so say so where it cannot be missed: on
+        # the route facts (printed verbatim) and at the top of the before-travel verification list.
+        facts.unverified_stops = unverified
+        facts.provider_warnings.append(
+            f"{len(unverified)} submitted stop(s) could not be located and are excluded from the measured "
+            f"route, distances and hazard positions")
+        verification = [
+            VerificationItem(
+                item=f'Locate and confirm the {u.kind} "{u.input_text}"',
+                reason="Not found by the geocoder, so it is not part of the measured route, distance or "
+                       "hazard positions in this plan")
+            for u in unverified
+        ] + verification
     scores = compute_scores(facts, hazards)
     emergency = build_emergency(facts, providers, nearest_hospital=opts.nearest_hospital,
                                 nearest_police=opts.nearest_police, emergency_contact=opts.emergency_contact,

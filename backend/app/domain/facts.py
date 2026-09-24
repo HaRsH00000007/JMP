@@ -31,6 +31,20 @@ class Waypoint(BaseModel):
     geocode_provider: str = ""
 
 
+class UnverifiedStop(BaseModel):
+    """A stop that was submitted but could not be located, kept verbatim rather than dropped or guessed.
+
+    The journey is still planned and measured through the stops that did resolve. This one is printed as
+    the driver wrote it, excluded from every distance, exposure and hazard position, and raised as a
+    verification item — never given assumed coordinates, which would put invented numbers in the report.
+    """
+
+    kind: Literal["start", "stop", "end"]
+    input_text: str
+    reason: str
+    error_code: str
+
+
 class LegFact(BaseModel):
     from_seq: int
     to_seq: int
@@ -142,6 +156,7 @@ class RouteFacts(BaseModel):
     providers: dict[str, str]
     is_demo_data: bool
     provider_warnings: list[str] = Field(default_factory=list)
+    unverified_stops: list[UnverifiedStop] = Field(default_factory=list)
 
 
 class HazardLocation(BaseModel):

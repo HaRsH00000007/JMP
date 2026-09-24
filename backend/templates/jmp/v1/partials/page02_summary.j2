@@ -41,6 +41,19 @@
 </div>
 <div class="caption">{{ r.meta.classification_note }}</div>
 
+{% if r.route.unverified_stops %}
+{{ c.h2('STOPS SUBMITTED BUT NOT LOCATED — NOT COVERED BY THIS ASSESSMENT') }}
+<table class="t compact">
+  <tr><th style="width:4%">#</th><th style="width:14%">Position</th><th>Address exactly as submitted</th><th style="width:26%">Why it is not on the route</th></tr>
+  {% for u in r.route.unverified_stops %}
+  <tr><td>{{ loop.index }}</td><td class="status-REQUIRES_VERIFICATION">{{ u.kind | upper }}</td><td>{{ u.input_text }}</td><td>{{ u.reason }}</td></tr>
+  {% endfor %}
+</table>
+<div class="caption">The distances, times, exposures, hazards and score in this plan are measured through the
+{{ r.route.waypoint_count }} located waypoint(s) only and do <b>not</b> include the {{ r.route.unverified_stops | length }}
+stop(s) above. No position has been assumed for them. Confirm each one before travel — see Page 6.</div>
+{% endif %}
+
 {{ c.h2('DATA CLASSIFICATION') }}
 <table class="t compact">
   <tr><th style="width:28%">Classification</th><th>What it covers in this report</th></tr>

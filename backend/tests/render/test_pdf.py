@@ -157,3 +157,43 @@ def test_missing_geometry_fails_gracefully(rendered):
     with pytest.raises(RenderError) as ei:
         render_html(report)
     assert ei.value.code == ErrorCode.ROUTE_GEOMETRY_UNAVAILABLE
+
+
+def test_unlocated_stops_are_printed_verbatim_and_excluded_from_measurement(library, providers, db):
+    """A journey survives stops the geocoder cannot find: they are printed as submitted, not guessed at.
+
+    Field-visit itineraries are mostly private clinics and shop names that no open gazetteer holds, so
+    requiring every stop threw away the whole route over one address. What must never happen instead is a
+    substituted coordinate — the measured distance and the hazard positions would then be fiction.
+    """
+    inputs = ["Zirakpur", "Mani Clinic, opposite old bus stand", "Lalru"]
+    facts = compute_facts(inputs, JourneyOptions(), providers, library, db, allow_unverified_stops=True)
+
+    assert [u.input_text for u in facts.route.unverified_stops] == ["Mani Clinic, opposite old bus stand"]
+    located = [w.input_text for w in facts.route.waypoints]
+    assert located == ["Zirakpur", "Lalru"], "an unlocated stop was given a position"
+    assert facts.route.waypoint_count == 2
+
+    # measurements must match the located route only
+    plain = compute_facts(["Zirakpur", "Lalru"], JourneyOptions(), providers, library, db)
+    assert facts.route.distance_km == plain.route.distance_km
+
+    # and it must be impossible to miss in the document
+    assert any("Mani Clinic" in v.item for v in facts.verification)
+    _, pdf = render_document(_report(facts, library))
+    doc = pymupdf.open(stream=pdf.pdf, filetype="pdf")
+    page2 = doc[1].get_text()
+    assert "Mani Clinic, opposite old bus stand" in page2
+    assert "NOT LOCATED" in page2.upper()
+    assert pdf.page_count == 8, "the extra block pushed page 2 into an overflow"
+
+
+def test_a_journey_needs_two_located_stops(library, providers, db):
+    """Below two, there is no route to measure — that is a failed row, not a document with invented facts."""
+    from app.errors import GeocodeError
+
+    with pytest.raises(GeocodeError) as ei:
+        compute_facts(["Mani Clinic, opposite old bus stand", "Shepherd Nursing Home (Kolathur)", "Lalru"],
+                      JourneyOptions(), providers, library, db, allow_unverified_stops=True)
+    assert ei.value.code == ErrorCode.GEOCODE_NOT_FOUND
+    assert len(ei.value.details["unverified"]) == 2
