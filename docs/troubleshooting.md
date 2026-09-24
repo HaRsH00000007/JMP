@@ -8,7 +8,7 @@ manifest. Codes are stable; this is what each one means.
 | Code | Meaning | What to do |
 |---|---|---|
 | `VALIDATION_ERROR` | Input rejected before any work (empty stop, duplicate consecutive locations, bad time, CSV gap) | Fix the input; `details` names the field |
-| `GEOCODE_NOT_FOUND` | The geocoder found nothing | Use a fuller address. In demo mode only gazetteer places resolve — this is deliberate, the mock never invents a location |
+| `GEOCODE_NOT_FOUND` | The geocoder found nothing | Use a fuller address. In demo mode only gazetteer places resolve — this is deliberate, the mock never invents a location. On real field data, see `ALLOW_UNVERIFIED_STOPS` in [setup.md](setup.md) to keep the journey and list the address as unverified instead of failing the row |
 | `GEOCODE_AMBIGUOUS` | Several strong candidates far apart, or a low-confidence match | Disambiguate ("Rampur, Punjab"). `details.candidates` lists what was found |
 | `ROUTE_NOT_FOUND` | The provider could not route between two points | Check the stop order and that points are reachable by road |
 | `ROUTE_GEOMETRY_UNAVAILABLE` | A route came back without geometry | Provider issue; maps are never faked, so the job fails instead |

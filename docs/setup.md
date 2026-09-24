@@ -80,6 +80,7 @@ change behaviour most:
 | `REPORT_DEMO_WATERMARK` | `true` | Prints the DEMO banner when route data or narrative is mocked. Hiding it does not change what the document records |
 | `OVERPASS_FALLBACK_URLS` | two public mirrors | Tried in order when the primary Overpass server is down or shedding load |
 | `OUTPUT_FOLDER` | empty | Pins the output subfolder (e.g. `2026/23_9_26`) instead of using the run date — see below |
+| `ALLOW_UNVERIFIED_STOPS` | `false` | Keep a journey when some stops cannot be geocoded — see below |
 
 ### Provider profiles (D-09)
 
@@ -133,6 +134,23 @@ in the sequence. Documents generated individually have no CSV row, so they are n
 Set `OUTPUT_FOLDER=2026/23_9_26` to finish a batch that was started on an earlier day: the remaining
 documents are then delivered into that same folder instead of one named for today. Leave it empty
 otherwise. Paths are stored per document in the database, so changing it never affects existing files.
+
+### Stops that cannot be located (`ALLOW_UNVERIFIED_STOPS`)
+
+By default a journey needs every stop located, and one address the geocoder cannot find fails that row.
+That is the right default — but on real field-visit data it is brutal: itineraries are mostly private
+clinics and shop names that OpenStreetMap does not contain, and of 55 real submissions only 11 had every
+stop resolvable.
+
+With `ALLOW_UNVERIFIED_STOPS=true` the journey is kept. It is routed and measured through the stops that
+*were* found; the others are printed on page 2 under **STOPS SUBMITTED BUT NOT LOCATED**, exactly as
+submitted, and added to the page 6 before-travel checklist. Two located stops are still required — below
+that there is no route to measure, so the row fails as before.
+
+What it never does is assume a position. Substituting, say, the city centre for a missing clinic would make
+the distance, the segment risks and the hazard pointer positions fiction in a document a driver is
+dispatched on. The trade-off it does carry is real and is stated on the document: **the plan's measurements
+cover only part of the submitted itinerary.** Leave it off unless that is understood and wanted.
 
 **Commercial** — Google or Mapbox for geocoding and routing (a key is needed; OSM still supplies road
 features and elevation):
