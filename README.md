@@ -87,11 +87,13 @@ Address quality decides everything. Measured on real submissions:
 | Provider | Setup | Result on real Indian field-visit addresses |
 |---|---|---|
 | `mock` | none | Demo gazetteer only; anything else fails by design |
-| **OSM** (`nominatim` + `osrm` + `overpass`) | free, no key | **~20% resolve.** Private clinics, colonies and landmark phrasing ("opposite X hospital", "Home vytila", "DB point") are not in OpenStreetMap. Public servers also cap Overpass at 2 concurrent queries, so bulk is slow |
+| **OSM** (`nominatim` + `osrm` + `overpass`) | free, no key | **46% of journeys usable** (38 of 82 real submissions had every stop verifiable, after the importer's retry with the city appended). Private clinics, shop names and landmark phrasing — "Shepherd Nursing Home (Kolathur)", "Mani Clinic, old bus stand", "Home vytila", "DB point" — are not in OpenStreetMap. Town-to-town journeys resolve well; itineraries of private medical practices mostly do not. Public servers also cap Overpass at 2 concurrent queries, so bulk is slow |
 | **Google** (`google` + key) | paid, ≈ $5/1,000 lookups | Handles typos, POIs and landmark phrasing — the realistic choice for this data. Written to spec but not yet exercised against a live key |
 
 The system never guesses a location: an address it cannot verify fails that row with `GEOCODE_NOT_FOUND`
-rather than routing a driver somewhere invented.
+rather than routing a driver somewhere invented. One unverifiable stop fails its own row and nothing else,
+and the bulk manifest names the address that stopped it — so a batch doubles as the list of addresses to
+send back for correction.
 
 ## Repository layout
 

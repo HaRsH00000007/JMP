@@ -65,6 +65,9 @@ class Settings(BaseSettings):
     open_meteo_url: str = "https://api.open-meteo.com/v1/elevation"
     provider_user_agent: str = "JMP-Generator/1.0 (EHS journey planning)"
     provider_timeout_s: float = 30.0
+    # Overpass needs its own, longer timeout: these queries legitimately run for a minute or more, so the
+    # 30 s that suits a geocoder would cut off healthy responses and retry them forever.
+    overpass_timeout_s: float = 90.0
     geocode_region_hint: str = "in"
     route_cache_ttl_days: int = 30
 

@@ -86,12 +86,16 @@ _ELEVATION_RL = _RateLimiter(0.7)
 _ELEVATION_SLOT = threading.Semaphore(1)
 
 
-def _overpass_json(client: HttpMixin, query: str, *, attempts: int = 2) -> dict[str, Any]:
+def _overpass_json(client: HttpMixin, query: str) -> dict[str, Any]:
     """POST an Overpass query, moving to the next configured mirror when a server is down or overloaded.
 
     Individual Overpass instances go offline or shed load routinely. With one endpoint the road-feature
     stage was a single point of failure: it lost row R011 of the 1-40 run to a server that was simply busy
     at that minute. Mirrors run the same API over the same data, so a retry elsewhere is equivalent.
+
+    Moving on IS the retry, so each endpoint gets one try. Retrying within an endpoint as well multiplies
+    the two: with three endpoints that turned a call that should fail in seconds into minutes of backoff,
+    and a row can be waiting on several of these calls.
     """
     s = settings()
     urls: list[str] = []
@@ -102,8 +106,8 @@ def _overpass_json(client: HttpMixin, query: str, *, attempts: int = 2) -> dict[
     for url in urls:
         with _OVERPASS_SLOTS:
             try:
-                return client.request_json("POST", url, data={"data": query}, attempts=attempts,
-                                           max_backoff_s=20.0)
+                return client.request_json("POST", url, data={"data": query}, attempts=1,
+                                           timeout=s.overpass_timeout_s)
             except ProviderError as exc:
                 last = exc
     raise last or ProviderError("Overpass unavailable: no endpoint configured")
@@ -332,7 +336,7 @@ out tags geom;
 node(around:3000,{line})[place~"^(city|town|suburb|village|neighbourhood)$"];
 out body;
 """
-        data = _overpass_json(self, query, attempts=3)
+        data = _overpass_json(self, query)
         elements = data.get("elements", [])
         idx = geo.RouteIndex(coords)
         roads = [e for e in elements if e["type"] == "way" and "highway" in e.get("tags", {})]

@@ -133,8 +133,13 @@ def fanout(bulk_id: uuid.UUID | str) -> None:
         return
     if not job_ids:
         return
-    if llm_mode == "realtime":
-        # warm the prompt cache: first row runs to completion alone (inline), then release the rest
+    # Warming the prompt cache means letting the first row reach Claude before the rest, so they read the
+    # cached prefix instead of each paying to write it. It only pays for itself when there is a cache: with
+    # a mock narrative there is nothing to warm, and running row 1 to completion alone then buys nothing
+    # while making every other row wait on it. That is not a small cost — the route providers are the slow
+    # part, so one row stuck on a rate-limited Overpass server holds the whole batch at zero.
+    warm_cache = llm_mode == "realtime" and settings().llm_provider == "anthropic"
+    if warm_cache:
         first, rest = job_ids[0], job_ids[1:]
         jobs.run_chain("analyse", str(first))
         for jid in rest:

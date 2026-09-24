@@ -225,3 +225,34 @@ def test_bulk_document_filename_carries_its_csv_row(db):
         doc = s.get(JmpDocument, item.document_id)
         name = doc.pdf_path.rsplit("/", 1)[-1]
         assert name.startswith(f"R041_{doc.document_code}_"), name
+
+
+def test_mock_narrative_batch_does_not_serialise_behind_row_one(db, monkeypatch):
+    """With no prompt cache to warm, every row must be dispatched — not queued behind row 1's providers.
+
+    fanout ran the first row's whole chain inline to warm Claude's prompt cache, then released the rest.
+    With a mock narrative there is no cache to warm, so that bought nothing and made the batch only as fast
+    as its first row: one row stuck on a rate-limited Overpass server held all 55 rows of a run at zero.
+    """
+    dispatched: list[str] = []
+    inline: list[str] = []
+    monkeypatch.setattr(bulk.jobs, "dispatch", lambda stage, jid, **kw: dispatched.append(str(jid)))
+    monkeypatch.setattr(bulk.jobs, "run_chain", lambda stage, jid: inline.append(str(jid)))
+
+    data = b"route_id,start_location,end_location\nW-1,Zirakpur,Lalru\nW-2,Mohali,Kharar\nW-3,Zirakpur,Kharar\n"
+    with session_scope() as s:
+        bid = bulk.create_bulk_job(s, parse_csv(data), filename="w.csv", csv_bytes=data).id
+    bulk.start(bid)
+    assert inline == [], "ran a row inline although there was no prompt cache to warm"
+    assert len(dispatched) == 3, dispatched
+
+    # with a real Claude configured the warm-up is worth its cost, so row 1 still leads
+    dispatched.clear()
+    set_settings(get_settings().model_copy(update={"llm_provider": "anthropic"}))
+    try:
+        with session_scope() as s:
+            bid2 = bulk.create_bulk_job(s, parse_csv(data), filename="w2.csv", csv_bytes=data).id
+        bulk.start(bid2)
+    finally:
+        set_settings(None)
+    assert len(inline) == 1 and len(dispatched) == 2
