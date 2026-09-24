@@ -69,6 +69,9 @@ class Settings(BaseSettings):
     # 30 s that suits a geocoder would cut off healthy responses and retry them forever.
     overpass_timeout_s: float = 90.0
     geocode_region_hint: str = "in"
+    # Elevation providers charge per coordinate, so this — not the route length — is what a long route costs
+    # against an hourly quota. Above it the sampling step widens; 0 disables the cap.
+    elevation_max_samples: int = 200
     # Keep a journey when some stops cannot be geocoded: route through the ones that resolved, print the
     # rest verbatim as stops requiring verification. Never invents a coordinate, and the start and end must
     # still resolve. Off by default — with it on, a plan's measurements cover only part of the itinerary.

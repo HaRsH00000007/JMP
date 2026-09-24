@@ -104,3 +104,28 @@ def test_pyraganda_constant_is_test_data_only():
     offenders = [p for p in app_dir.rglob("*.py") if "Pyraganda" in p.read_text(encoding="utf-8")]
     assert offenders == [], offenders
     assert PYRAGANDA[0] == "Pyraganda"
+
+
+def test_elevation_sampling_is_capped_on_long_routes(library, providers, db, monkeypatch):
+    """Elevation is billed per coordinate, so a long route at 250 m is what exhausts an hourly quota.
+
+    146 km at 250 m is 585 points; a 5,000/hour free tier then covers eight routes, which is how a 55-row
+    run lost its remaining rows to "Hourly API request limit exceeded". Long routes sample coarser, and the
+    document says so, because it does change what the elevation profile can resolve.
+    """
+    from app.services.pipeline import JourneyOptions, compute_facts
+
+    asked: list[float] = []
+    real = providers.elevation.profile
+
+    def spy(polyline, sample_m):
+        asked.append(sample_m)
+        return real(polyline, sample_m)
+
+    monkeypatch.setattr(providers.elevation, "profile", spy)
+    facts = compute_facts(["Pyraganda", "Ranaghat"], JourneyOptions(), providers, library, db)
+    km = facts.route.distance_km
+    assert asked, "elevation was never requested"
+    assert km * 1000 / asked[-1] <= 201, f"{km:.0f} km asked for {km * 1000 / asked[-1]:.0f} samples"
+    if asked[-1] > 250:
+        assert any("stay inside the provider's request budget" in w for w in facts.route.provider_warnings)

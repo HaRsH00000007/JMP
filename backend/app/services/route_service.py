@@ -257,10 +257,25 @@ def analyse_route(
         fs = cached(session, "features", providers.features.name, simplified_key, FeatureSet,
                     lambda: providers.features.features_along(full))  # type: ignore[union-attr]
     elev: ElevationProfile | None = None
+    extra_warnings: list[str] = []
     if providers.elevation is not None:
-        step = rules["sampling"]["elevation_step_m"]
+        step = float(rules["sampling"]["elevation_step_m"])
+        # Elevation services charge per coordinate, not per request, so sampling a long route at the
+        # configured step is what exhausts an hourly quota: 250 m over 146 km is 585 points, and a free tier
+        # of 5,000 an hour then covers only eight routes. Widen the step on long routes to stay inside the
+        # budget — gradient and hill hazards do not need 250 m resolution over a highway — and say so on the
+        # document when it happens, since it does change what the profile can see.
+        cap = settings().elevation_max_samples
+        route_m = geo.cumulative(full)[-1]
+        if cap > 0 and route_m / step > cap:
+            step = route_m / cap
+            extra_warnings.append(
+                f"Elevation sampled every {step:.0f} m rather than "
+                f"{rules['sampling']['elevation_step_m']} m to stay inside the provider's request budget "
+                f"({cap} points over {route_m / 1000:.0f} km)")
         simplified_key = [[round(a, 4), round(b, 4)] for a, b in geo.douglas_peucker(full, 30)]
-        elev = cached(session, "elevation", providers.elevation.name, [step, simplified_key], ElevationProfile,
+        elev = cached(session, "elevation", providers.elevation.name, [round(step, 1), simplified_key],
+                      ElevationProfile,
                       lambda: providers.elevation.profile(full, step))  # type: ignore[union-attr]
 
     # ---- road-type track: prefer OSM road samples when they cover most of the route ----
@@ -445,7 +460,7 @@ def analyse_route(
             features=located, elevation=elev_summary, states=states, region_label=region_label,
             route_name=route_name, journey_type=jt, travel=travel, hilly_region=hilly,
             providers=providers.describe(), is_demo_data=providers.is_demo,
-            provider_warnings=list(route.warnings) + (fs.warnings if fs else []),
+            provider_warnings=list(route.warnings) + (fs.warnings if fs else []) + extra_warnings,
         ),
         route, fs, elev,
     )

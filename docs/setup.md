@@ -81,6 +81,7 @@ change behaviour most:
 | `OVERPASS_FALLBACK_URLS` | two public mirrors | Tried in order when the primary Overpass server is down or shedding load |
 | `OUTPUT_FOLDER` | empty | Pins the output subfolder (e.g. `2026/23_9_26`) instead of using the run date — see below |
 | `ALLOW_UNVERIFIED_STOPS` | `false` | Keep a journey when some stops cannot be geocoded — see below |
+| `ELEVATION_MAX_SAMPLES` | `200` | Elevation points per route. Providers bill per coordinate, so this caps what a long route costs against an hourly quota |
 
 ### Provider profiles (D-09)
 

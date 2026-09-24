@@ -41,6 +41,13 @@ fails. Self-host Overpass for production, or set `FEATURE_PROVIDER=none` to run 
 the report then relies on provider road names only, and hazards that need features will not be detected
 (they appear as verification items instead).
 
+**Bulk rows fail with `PROVIDER_UNAVAILABLE` and Open-Meteo says "Hourly API request limit exceeded".**
+Elevation is billed per coordinate, not per request, so route length is what spends the quota: at the
+configured 250 m step a 146 km route costs ~585 of a 5,000/hour free tier, i.e. about eight routes an hour.
+`ELEVATION_MAX_SAMPLES` (default 200) widens the step on long routes to stay inside it, and any document
+whose profile was coarsened says so in its route warnings. Nothing but waiting clears an exhausted hour —
+it resets on the hour, and no retry inside it will succeed.
+
 **Many bulk rows fail with `PROVIDER_UNAVAILABLE` naming Open-Meteo.** Its free tier is limited per minute
 and a long route is fetched in 100-point chunks, so several workers together trip it within seconds. The
 client serialises elevation requests, spaces them, and retries a 429 for up to 5 attempts honouring
