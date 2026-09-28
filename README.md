@@ -122,6 +122,7 @@ send back for correction.
 | [docs/deployment.md](docs/deployment.md) | Production topology, scaling, secrets, retention |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | Every error code and what it means |
 | [docs/decisions.md](docs/decisions.md) | 22 business decisions, defaults implemented, what needs EHS sign-off |
+| [docs/mobile-integration.md](docs/mobile-integration.md) | Wiring JMP into an existing mobile app backend (NestJS/MongoDB): contract, async model, error handling, what to add |
 
 ## Tests
 
