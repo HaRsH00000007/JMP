@@ -120,6 +120,10 @@ class Settings(BaseSettings):
     # layout cannot fit (long stop lists, many verification rows) fails before any Claude spend.
     llm_preflight_render: bool = True
     llm_max_attempts: int = 3
+    # Ceiling on what ONE document may spend across all its attempts. A row that keeps failing
+    # validation pays for the whole answer again each retry, so a few bad rows can outspend the batch
+    # they sit in. At the cap the document fails instead of retrying. 0 disables the ceiling.
+    llm_max_cost_per_document_usd: float = 0.60
     llm_concurrency: int = 4  # worker concurrency of the "llm" queue
     bulk_llm_mode: Literal["realtime", "batch"] = "realtime"
     batch_poll_interval_s: int = 60
