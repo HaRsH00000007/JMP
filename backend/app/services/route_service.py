@@ -320,9 +320,19 @@ def _reject_outliers(texts: Sequence[str], found: list[GeocodeResult | None],
         for i in idx:
             gi = found[i]
             assert gi is not None
-            others = [geo.haversine((gi.lat, gi.lng), (found[j].lat, found[j].lng))  # type: ignore[union-attr]
-                      for j in idx if j != i]
+            # Measured against DISTINCT places only. A journey that returns to where it started repeats
+            # that point, so a wrong start is also the wrong end — and each copy is 0 km from the other,
+            # which would make the pair look perfectly well-connected and hide it. "Harinagar" resolving
+            # to Madhya Pradesh on a round trip around Delhi survived exactly that way.
+            others = [d for d in
+                      (geo.haversine((gi.lat, gi.lng), (found[j].lat, found[j].lng))  # type: ignore[union-attr]
+                       for j in idx if j != i)
+                      if d > 1000]
+            if not others:
+                continue  # every other stop is this same place; the collapse pass handles that
             nearest[i] = min(others) / 1000.0
+        if not nearest:
+            return
         worst = max(nearest, key=lambda i: nearest[i])
         if nearest[worst] <= limit_km:
             return

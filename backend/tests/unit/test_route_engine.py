@@ -228,3 +228,29 @@ def test_outlier_guard_leaves_a_genuine_long_journey_alone(library, providers, d
     out = route_service.geocode_best_effort([c[0] for c in chain], providers, None)
     assert [t for t in out.texts] == ["A", "B", "C", "D"]
     assert out.unverified == []
+
+
+def test_a_wrong_start_is_caught_even_when_the_journey_returns_to_it(library, providers, db, monkeypatch):
+    """A round trip repeats its start, and two copies of a wrong point sit 0 km apart.
+
+    Measured against all stops, each copy's nearest neighbour is the other, so the pair looks perfectly
+    well-connected and the error hides. "Harinagar" resolved to Madhya Pradesh on a round trip whose other
+    stops were all in Delhi, and the plan came out at 1,010 km.
+    """
+    from app.domain.route import GeocodeResult
+    from app.services import route_service
+
+    pts = {"Harinagar": (23.2, 78.5),        # Madhya Pradesh — wrong, and used twice
+           "Punjabi Bagh": (28.67, 77.13),   # Delhi
+           "Paschim Vihar": (28.67, 77.10),  # Delhi
+           "Tilak Nagar": (28.64, 77.09)}    # Delhi
+
+    def fake(text, providers_, session=None, city_hint=None, *, area_fallback=False):
+        lat, lng = pts[text]
+        return GeocodeResult(query=text, name=text, lat=lat, lng=lng, provider="test", confidence=0.95)
+
+    monkeypatch.setattr(route_service, "geocode_one", fake)
+    out = route_service.geocode_best_effort(
+        ["Harinagar", "Punjabi Bagh", "Paschim Vihar", "Tilak Nagar", "Harinagar"], providers, None)
+    assert out.texts == ["Punjabi Bagh", "Paschim Vihar", "Tilak Nagar"], out.texts
+    assert {u.input_text for u in out.unverified} == {"Harinagar"}
