@@ -10,9 +10,10 @@ from __future__ import annotations
 import calendar
 import hashlib
 import json
+import re
 from collections.abc import Callable, Sequence
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, NamedTuple, TypeVar
+from typing import Any, Literal, NamedTuple, TypeVar
 
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -24,6 +25,7 @@ from app.domain import geo
 from app.domain.facts import (
     Alternative,
     Exposures,
+    ItineraryStop,
     LegFact,
     LocatedFeature,
     RoadTypeShare,
@@ -35,7 +37,7 @@ from app.domain.facts import (
 )
 from app.domain.route import ElevationProfile, FeatureSet, GeocodeResult, RouteResult
 from app.domain.solar import fmt_hhmm, local_sun_times
-from app.errors import ErrorCode, GeocodeError, JmpError, RouteError
+from app.errors import ErrorCode, GeocodeError, RouteError
 from app.observability.logging import get_logger
 from app.providers.osm import categorize
 from app.providers.registry import Providers
@@ -92,18 +94,189 @@ def cached(session: Session | None, kind: str, provider: str, parts: Any, model:
 
 
 # --------------------------------------------------------------------------------------- geocoding
-def geocode_one(text: str, providers: Providers, session: Session | None = None) -> GeocodeResult:
-    g = cached(session, "geocode", providers.geocoder.name, text.strip().lower(), GeocodeResult,
-               lambda: providers.geocoder.geocode(text))
+def _geocode_query(query: str, providers: Providers, session: Session | None) -> GeocodeResult:
+    g = cached(session, "geocode", providers.geocoder.name, query.strip().lower(), GeocodeResult,
+               lambda: providers.geocoder.geocode(query))
     if g.confidence < 0.5:
-        raise GeocodeError(f"Low-confidence location: {text!r}", code=ErrorCode.GEOCODE_AMBIGUOUS,
+        raise GeocodeError(f"Low-confidence location: {query!r}", code=ErrorCode.GEOCODE_AMBIGUOUS,
                            details={"candidates": g.candidates})
     return g
 
 
-def geocode_all(texts: Sequence[str], providers: Providers, session: Session | None = None) -> list[GeocodeResult]:
+# Result types that name an area (a suburb, village, town, district…), never a facility. Only these are
+# accepted by the area-level fallback, so a stop is never pinned on a different hospital or shop.
+_AREA_CATEGORIES = {"place", "boundary"}
+_AREA_TYPES = {"city", "town", "village", "hamlet", "suburb", "neighbourhood", "quarter", "locality",
+               "city_district", "district", "county", "state_district", "municipality", "borough",
+               "administrative", "residential"}
+_FRAGMENT_SPLIT = re.compile(r"[,/()|]|\s-\s?|-(?=[A-Za-z])|\bto\b|\bnear\b|\bopp\.?\b", re.I)
+APPROXIMATE_CONFIDENCE = 0.55  # accepted (>= 0.5) but < 0.8, so the plan lists it for verification
+
+
+def _is_area(g: GeocodeResult) -> bool:
+    kinds = {t.lower() for t in g.place_types}
+    return bool(kinds & _AREA_TYPES) or (bool(kinds & _AREA_CATEGORIES) and not kinds & {"amenity", "shop"})
+
+
+# Words that name a facility, a person or a road rather than an area; a candidate containing one is skipped.
+_NOT_AREA_WORDS = {
+    "hospital", "hospitals", "hosipital", "clinic", "nursing", "home", "medical", "medicare", "centre", "center",
+    "pharma", "pharmacy", "distributor", "distributer", "agencies", "enterprises", "company", "dr", "doctor",
+    "multi", "speciality", "specialty", "care", "health", "healthcare", "ivf", "fertility", "diagnostics",
+    "road", "rd", "street", "st", "marg", "highway", "bypass", "flyover", "junction", "bus", "stand", "busstand",
+    "railway", "station", "opposite", "opp", "near", "behind", "beside", "front", "the", "and", "of", "govt",
+    "government", "district", "combined", "memorial", "child", "children", "mother", "office", "point", "area",
+}
+
+
+def _area_fragments(text: str, city: str | None = None) -> list[str]:
+    """Candidate area names inside a stop, most specific first, at most eight.
+
+    First the pieces between separators ("Dr X / kankhal / Y" -> "kankhal"), then runs of up to three words
+    taken from the end of the text, skipping any run that contains a facility, road or person word, a digit,
+    or the city itself ("Shanti manglik Hospital Fatehabad Road Tajganj agra" -> "Tajganj", …). Only a
+    candidate that resolves to an area type is ever used (see geocode_one), so a hospital or road name
+    can never be picked up here.
+    """
+    city_l = (city or "").strip().lower()
+    out: list[str] = []
+
+    def add(cand: str) -> None:
+        cand = cand.strip(" .-,")
+        words = [w.lower().strip(".") for w in cand.split()]
+        if (len(cand) < 3 or not words or cand.lower() == text.lower() or cand.lower() == city_l
+                or any(any(ch.isdigit() for ch in w) or w in _NOT_AREA_WORDS or w == city_l for w in words)):
+            return
+        if cand.lower() not in (c.lower() for c in out):
+            out.append(cand)
+
+    for part in reversed([p for p in _FRAGMENT_SPLIT.split(text) if p]):
+        add(part)
+    words = [w for w in re.split(r"[\s,/()|.-]+", text) if w]
+    road_words = {"road", "rd", "marg", "street", "st", "highway", "bypass"}
+    for size in (3, 2, 1):
+        for i in range(len(words) - size, -1, -1):
+            nxt = words[i + size].lower() if i + size < len(words) else ""
+            if nxt in road_words:  # "Fatehabad Road" names a road, not the town of Fatehabad
+                continue
+            add(" ".join(words[i:i + size]))
+    return out[:8]
+
+
+AREA_RADIUS_M = 80_000  # an area found without the city in the query must lie this close to the city
+CITY_RADIUS_M = 200_000  # a stop looked up without its city must lie this close to the row's city
+
+
+def _is_named_road(g: GeocodeResult) -> bool:
+    return "highway" in {t.lower() for t in g.place_types}
+
+
+def _approximate(g: GeocodeResult, level: str) -> GeocodeResult:
+    return g.model_copy(update={"confidence": min(g.confidence, APPROXIMATE_CONFIDENCE),
+                                "name": f"{g.name} ({level}-level, approximate)"})
+
+
+def geocode_one(text: str, providers: Providers, session: Session | None = None,
+                city_hint: str | None = None, *, area_fallback: bool = False) -> GeocodeResult:
+    """Locate one stop as written; if that fails and a city was supplied that the text does not already
+    name, retry as "<text>, <city>". The hint only steers the lookup — the stop is still printed as written.
+
+    With area_fallback (bulk plans that must always carry a route), a stop that still cannot be found is
+    placed at an area named in its own text ("kankhal" in "Dr X / kankhal / …"), else at the supplied city —
+    accepted only when the result is an area, never a facility, and marked approximate (confidence 0.55,
+    which puts it on the plan's before-travel verification list).
+    """
+    hint = (city_hint or "").strip()
+    if not hint:
+        return _geocode_query(text, providers, session)
+    names_city = bool(re.search(rf"\b{re.escape(hint.lower())}\b", text.lower()))
+    city_g: GeocodeResult | None
+    try:
+        city_g = _geocode_query(hint, providers, session)
+    except GeocodeError:
+        city_g = None
+
+    def km_from_city(g: GeocodeResult) -> float:
+        return geo.haversine((city_g.lat, city_g.lng), (g.lat, g.lng)) / 1000 if city_g else 0.0
+
+    # The sheet may use a city's older or short name ("Ramnad", "Tanjore", "Cochin") while the map records
+    # "Ramanathapuram", "Thanjavur", "Kochi"; the geocoder's context check compares against the map's names,
+    # so each "<x>, <city>" lookup is also tried with the map's own name for the city.
+    city_names = [hint]
+    if city_g is not None:
+        canonical = city_g.name.split(",")[0].strip()
+        if canonical and canonical.lower() != hint.lower():
+            city_names.append(canonical)
+
+    # 1. "<stop>, <city>": the geocoder then requires the result to lie in that city (its context check)
+    # A result whose name does not contain the searched text (confidence < 0.8, see NominatimGeocoder) is a
+    # different place — "Ramakrishna Road, Salem" -> "Ramakrishna Mission Charitable Dispensary" — so it is
+    # not used as the stop; the area/city fallback below then places it approximately instead.
+    if not names_city:
+        for cname in city_names:
+            try:
+                g = _geocode_query(f"{text}, {cname}", providers, session)
+                # the geocoder's context check is textual; also require the point to be near the city
+                # ("Church road, Ramnad" once came back as a Church Road in Coimbatore, 271 km away)
+                if g.confidence >= 0.8 and km_from_city(g) <= CITY_RADIUS_M / 1000:
+                    return g
+            except GeocodeError:
+                pass
+    # 2. the stop as written. A bare facility or road name ("JS hospital", "Ramakrishna Road") exists all over
+    # the country, so without the city it is kept only when it is a named town or area near the city
+    # ("Warangal" for a Karimnagar route); a text that names the city may be any place near it.
+    try:
+        g = _geocode_query(text, providers, session)
+        near = km_from_city(g) <= CITY_RADIUS_M / 1000
+        if near and g.confidence >= 0.8 and (names_city or _is_area(g)):
+            return g
+        first: GeocodeError = GeocodeError(
+            f"Location not found near {hint}: {text!r} (nearest match {g.name!r} is {km_from_city(g):.0f} km away "
+            f"or not a town/area)", code=ErrorCode.GEOCODE_NOT_FOUND)
+    except GeocodeError as exc:
+        first = exc
+    if area_fallback:
+        for frag in _area_fragments(text, hint):
+            # "<area>, <city>" first; then the area alone, which finds a named town just outside the city's
+            # district ("Tanda" near Ayodhya) — kept only if it lies within AREA_RADIUS_M of the city
+            queries = [frag] if (not hint or re.search(rf"\b{re.escape(hint.lower())}\b", frag.lower())) \
+                else [*(f"{frag}, {cname}" for cname in city_names), frag]
+            for query in queries:
+                try:
+                    g = _geocode_query(query, providers, session)
+                except GeocodeError:
+                    continue
+                # the result must carry the searched name — the geocoder's fuzzy near-misses ("vikas colony"
+                # -> "Amar Vihar Colony") are rejected; a road named after the area ("Arasaradi Arapalayam
+                # Salai" for "Arasaradi") is accepted, a facility never is
+                near = city_g is None or geo.haversine((city_g.lat, city_g.lng), (g.lat, g.lng)) <= AREA_RADIUS_M
+                if (_is_area(g) or _is_named_road(g)) and g.name.lower().startswith(frag.lower()) and near:
+                    return _approximate(g, "area")
+        if city_g is not None and _is_area(city_g):
+            return _approximate(city_g, "city")
+    raise first
+
+
+def geocode_all(texts: Sequence[str], providers: Providers, session: Session | None = None,
+                city_hint: str | None = None) -> list[GeocodeResult]:
     """Locate every stop, or fail the journey. Nothing is planned on a location we could not verify."""
-    return [geocode_one(t, providers, session) for t in texts]
+    return [geocode_one(t, providers, session, city_hint) for t in texts]
+
+
+class TooFewLocatedStops(GeocodeError):
+    """Best-effort geocoding found fewer than two distinct stops, so there is no route to measure.
+
+    Carries what was learnt, so a caller that may issue a text-only plan (TEXT_ONLY_FALLBACK) can print
+    every stop verbatim without geocoding again.
+    """
+
+    def __init__(self, message: str, *, located: list[tuple[str, GeocodeResult]],
+                 unverified: list[UnverifiedStop], collapsed: list[str]) -> None:
+        super().__init__(message, code=ErrorCode.GEOCODE_NOT_FOUND,
+                         details={"unverified": [u.model_dump() for u in unverified], "same_point": collapsed})
+        self.located = located
+        self.unverified = unverified
+        self.collapsed = collapsed
 
 
 class BestEffortGeocode(NamedTuple):
@@ -111,10 +284,65 @@ class BestEffortGeocode(NamedTuple):
     located: list[GeocodeResult]
     unverified: list[UnverifiedStop]     # submitted but not found — printed verbatim, never given a position
     collapsed: list[str]                 # located, but the same point as the stop before it
+    itinerary: list[ItineraryStop]       # every submitted stop, in order, with what became of it
+
+
+def _kind(i: int, n: int) -> Literal["start", "stop", "end"]:
+    return "start" if i == 0 else ("end" if i == n - 1 else "stop")
+
+
+def full_itinerary(texts: Sequence[str]) -> list[ItineraryStop]:
+    """The itinerary when every stop was located and none was collapsed (the strict geocode_all path)."""
+    return [ItineraryStop(position=i + 1, kind=_kind(i, len(texts)), input_text=t, status="located",
+                          waypoint_seq=i + 1) for i, t in enumerate(texts)]
+
+
+def _reject_outliers(texts: Sequence[str], found: list[GeocodeResult | None],
+                     unverified: list[UnverifiedStop], n: int) -> None:
+    """Drop a located stop that sits implausibly far from every other stop on the same journey.
+
+    Confidence cannot catch this. A short, context-free stop name matches a real place somewhere else in
+    the country and matches it *well*: on a Jalandhar day trip, "Railway station" resolved to Chennai and
+    "Town market" to a village in Kerala at 0.95 confidence. Accepting both turned a local itinerary into a
+    3,200 km route through three states, with every distance, segment and hazard position derived from it.
+
+    Journeys are planned around a place, so the stops of one journey belong near each other. A stop whose
+    nearest companion is beyond the threshold is treated as not located: printed verbatim, excluded from
+    the measurement, and raised for verification — the same handling as an address that was never found.
+    Set GEOCODE_MAX_STOP_SEPARATION_KM to 0 for genuinely long-haul journeys.
+    """
+    limit_km = settings().geocode_max_stop_separation_km
+    idx = [i for i, g in enumerate(found) if g is not None]
+    if limit_km <= 0 or len(idx) < 3:
+        return  # with two stops there is no majority to be an outlier from
+    while len(idx) >= 3:
+        nearest = {}
+        for i in idx:
+            gi = found[i]
+            assert gi is not None
+            others = [geo.haversine((gi.lat, gi.lng), (found[j].lat, found[j].lng))  # type: ignore[union-attr]
+                      for j in idx if j != i]
+            nearest[i] = min(others) / 1000.0
+        worst = max(nearest, key=lambda i: nearest[i])
+        if nearest[worst] <= limit_km:
+            return
+        away = nearest[worst]
+        g = found[worst]
+        assert g is not None
+        log.warning("geocode_outlier_rejected", stop=texts[worst], resolved=g.name, km_from_nearest=round(away))
+        unverified.append(UnverifiedStop(
+            kind=_kind(worst, n), input_text=texts[worst],
+            reason=(f"Resolved to {g.name!r}"
+                    + (f", {g.state}" if g.state else "")
+                    + f" — {away:,.0f} km from the nearest other stop on this journey, so it is not the "
+                      f"place that was meant"),
+            error_code=str(ErrorCode.GEOCODE_AMBIGUOUS)))
+        found[worst] = None
+        idx.remove(worst)
 
 
 def geocode_best_effort(texts: Sequence[str], providers: Providers, session: Session | None = None,
-                        ) -> BestEffortGeocode:
+                        city_hint: str | None = None, *, area_fallback: bool = False) -> BestEffortGeocode:
     """Locate what can be located, and report the rest instead of failing the whole journey.
 
     A field visit is usually a chain of private clinics and shop names that no open gazetteer contains, so
@@ -126,48 +354,57 @@ def geocode_best_effort(texts: Sequence[str], providers: Providers, session: Ses
     end — the plan is then measured between the stops that were found, and the missing end of the itinerary
     is listed as unverified. That is a real limitation of such a plan, which is why it is printed on the
     document rather than only recorded here.
+
+    Only a GeocodeError marks a stop as not located. A provider outage propagates, so the stage retries it
+    instead of printing a findable stop as "not found".
     """
-    kept_texts: list[str] = []
-    kept: list[GeocodeResult] = []
+    n = len(texts)
+    found: list[GeocodeResult | None] = []
     unverified: list[UnverifiedStop] = []
-    last = len(texts) - 1
     for i, t in enumerate(texts):
-        kind = "start" if i == 0 else ("end" if i == last else "stop")
         try:
-            kept.append(geocode_one(t, providers, session))
-            kept_texts.append(t)
-        except JmpError as exc:
-            unverified.append(UnverifiedStop(kind=kind, input_text=t, reason=exc.message,
+            found.append(geocode_one(t, providers, session, city_hint, area_fallback=area_fallback))
+        except GeocodeError as exc:
+            found.append(None)
+            unverified.append(UnverifiedStop(kind=_kind(i, n), input_text=t, reason=exc.message,
                                              error_code=str(exc.code)))
+    _reject_outliers(texts, found, unverified, n)
     # Dropping a stop can leave two identical ones next to each other — "A, B, A" loses B and becomes
     # "A, A", which is not a journey and which analyse_route rightly refuses. Itineraries also arrive with
     # the same place written twice ("Pondicherry" then "Puducherry"). Collapse those here, by position
-    # rather than by spelling, so the run is not lost to a duplicate.
+    # rather than by spelling, so the run is not lost to a duplicate. The itinerary still lists both.
     collapsed: list[str] = []
     texts_out: list[str] = []
     located_out: list[GeocodeResult] = []
-    for text, g in zip(kept_texts, kept, strict=True):
-        if located_out and geo.haversine((located_out[-1].lat, located_out[-1].lng), (g.lat, g.lng)) < 1:
-            collapsed.append(text)
-            continue
-        texts_out.append(text)
-        located_out.append(g)
+    itinerary: list[ItineraryStop] = []
+    for i, (t, g) in enumerate(zip(texts, found, strict=True)):
+        if g is None:
+            itinerary.append(ItineraryStop(position=i + 1, kind=_kind(i, n), input_text=t, status="not_located"))
+        elif located_out and geo.haversine((located_out[-1].lat, located_out[-1].lng), (g.lat, g.lng)) < 1:
+            collapsed.append(t)
+            itinerary.append(ItineraryStop(position=i + 1, kind=_kind(i, n), input_text=t,
+                                           status="same_as_previous", waypoint_seq=len(located_out)))
+        else:
+            texts_out.append(t)
+            located_out.append(g)
+            itinerary.append(ItineraryStop(position=i + 1, kind=_kind(i, n), input_text=t, status="located",
+                                           waypoint_seq=len(located_out)))
     if len(located_out) < 2:
-        found = ", ".join(repr(t) for t in texts_out) or "none"
+        shown = ", ".join(repr(t) for t in texts_out) or "none"
         extra = f"; {len(collapsed)} more resolved to a point already on the route" if collapsed else ""
-        raise GeocodeError(
+        raise TooFewLocatedStops(
             f"Cannot plan a journey: at least two distinct stops must be located, {len(located_out)} were "
-            f"({found}){extra}",
-            code=ErrorCode.GEOCODE_NOT_FOUND,
-            details={"unverified": [u.model_dump() for u in unverified], "same_point": collapsed})
-    return BestEffortGeocode(texts_out, located_out, unverified, collapsed)
+            f"({shown}){extra}",
+            located=[(t, g) for t, g in zip(texts, found, strict=True) if g is not None],
+            unverified=unverified, collapsed=collapsed)
+    return BestEffortGeocode(texts_out, located_out, unverified, collapsed, itinerary)
 
 
 # ---------------------------------------------------------------------------------------- helpers
 def _short(g: GeocodeResult, text: str) -> str:
-    name = g.name or text
-    name = name.split(",")[0].strip()
-    return name if len(name) <= 30 else name[:29].rstrip() + "…"
+    """The label a stop is printed under: the text as submitted, never the geocoder's name for the point it
+    resolved to (that stays on Waypoint.name, for audit)."""
+    return " ".join(text.split()) or g.name
 
 
 def _intervals_union(intervals: list[tuple[float, float]]) -> float:
@@ -332,7 +569,11 @@ def analyse_route(
                             place_types=g.place_types, km_from_start=round(km, 2),
                             is_institutional=bool(INSTITUTIONAL_TYPES & {t.lower() for t in g.place_types}),
                             geocode_confidence=g.confidence, geocode_provider=g.provider))
-    is_round = geo.haversine(waypoints_ll[0], waypoints_ll[-1]) < 300
+    # A loop only when the journey really ends where it began: an end stop placed approximately (at its area
+    # or city, see geocode_one) can land on the start point without the itinerary being a round trip.
+    ends_exact = min(geocoded[0].confidence, geocoded[-1].confidence) > APPROXIMATE_CONFIDENCE
+    is_round = geo.haversine(waypoints_ll[0], waypoints_ll[-1]) < 300 and (
+        ends_exact or " ".join(inputs[0].lower().split()) == " ".join(inputs[-1].lower().split()))
 
     # ---- exposures ----
     if samples:
@@ -461,6 +702,7 @@ def analyse_route(
             route_name=route_name, journey_type=jt, travel=travel, hilly_region=hilly,
             providers=providers.describe(), is_demo_data=providers.is_demo,
             provider_warnings=list(route.warnings) + (fs.warnings if fs else []) + extra_warnings,
+            features_available=fs is not None,
         ),
         route, fs, elev,
     )

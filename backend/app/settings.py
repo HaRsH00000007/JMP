@@ -76,6 +76,11 @@ class Settings(BaseSettings):
     # Google is asked as well. Not-found and ambiguous always fall through regardless. The floor is the
     # point of the fallback — OSM's costly failure is a confident wrong answer, not a missing one.
     geocode_fallback_min_confidence: float = 0.8
+    # A located stop further than this from every other stop on the same journey is treated as not
+    # located. Short stop names ("Railway station", "Town market") match real places countrywide, at high
+    # confidence, and one accepted match turns a local itinerary into a cross-country route. 0 disables it,
+    # which is what genuinely long-haul planning needs.
+    geocode_max_stop_separation_km: float = 300.0
     # Elevation providers charge per coordinate, so this — not the route length — is what a long route costs
     # against an hourly quota. Above it the sampling step widens; 0 disables the cap.
     elevation_max_samples: int = 200
