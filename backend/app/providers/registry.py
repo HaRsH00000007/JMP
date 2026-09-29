@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.providers import commercial, mock, osm
+from app.providers import commercial, fallback, mock, osm
 from app.providers.base import ElevationProvider, Geocoder, PlacesProvider, RoadFeatureProvider, RouteProvider
 from app.settings import settings
 
@@ -45,7 +45,9 @@ def get_providers() -> Providers:
     s = settings()
     geocoder: Geocoder = {
         "mock": mock.MockGeocoder, "nominatim": osm.NominatimGeocoder,
+        "nominatim_photon": osm.NominatimWithPhotonFallback, "photon": osm.PhotonGeocoder,
         "google": commercial.GoogleGeocoder, "mapbox": commercial.MapboxGeocoder,
+        "osm_google": fallback.OsmWithGoogleFallback,
     }[s.geocoder]()
     router: RouteProvider = {
         "mock": mock.MockRouteProvider, "osrm": osm.OsrmRouteProvider,
@@ -53,7 +55,8 @@ def get_providers() -> Providers:
     }[s.route_provider]()
     features = {"mock": mock.MockFeatureProvider, "overpass": osm.OverpassFeatureProvider, "none": None}[
         s.feature_provider]
-    elevation = {"mock": mock.MockElevationProvider, "open_meteo": osm.OpenMeteoElevation, "none": None}[
+    elevation = {"mock": mock.MockElevationProvider, "open_meteo": osm.OpenMeteoElevation,
+                 "opentopodata": osm.OpenTopoDataElevation, "none": None}[
         s.elevation_provider]
     places = {"mock": mock.MockPlacesProvider, "overpass": osm.OverpassPlacesProvider, "none": None}[
         s.places_provider]

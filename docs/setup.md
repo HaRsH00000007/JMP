@@ -81,6 +81,7 @@ change behaviour most:
 | `OVERPASS_FALLBACK_URLS` | two public mirrors | Tried in order when the primary Overpass server is down or shedding load |
 | `OUTPUT_FOLDER` | empty | Pins the output subfolder (e.g. `2026/23_9_26`) instead of using the run date — see below |
 | `ALLOW_UNVERIFIED_STOPS` | `false` | Keep a journey when some stops cannot be geocoded — see below |
+| `GEOCODE_FALLBACK_MIN_CONFIDENCE` | `0.8` | `osm_google` only: below this confidence, Google is asked as well |
 | `ELEVATION_MAX_SAMPLES` | `200` | Elevation points per route. Providers bill per coordinate, so this caps what a long route costs against an hourly quota |
 
 ### Provider profiles (D-09)
@@ -152,6 +153,31 @@ What it never does is assume a position. Substituting, say, the city centre for 
 the distance, the segment risks and the hazard pointer positions fiction in a document a driver is
 dispatched on. The trade-off it does carry is real and is stated on the document: **the plan's measurements
 cover only part of the submitted itinerary.** Leave it off unless that is understood and wanted.
+
+**OSM with a Google fallback (recommended for real field data)** — OpenStreetMap answers first and
+Google is asked only when it cannot: not found, ambiguous, or below `GEOCODE_FALLBACK_MIN_CONFIDENCE`.
+
+```env
+GEOCODER=osm_google
+ROUTE_PROVIDER=osrm
+ROUTE_PROVIDER_API_KEY=<your Google Maps Platform key>
+```
+
+Enable the **Geocoding API** in Google Cloud (and the **Routes API** as well only if you also set
+`ROUTE_PROVIDER=google`). Google is billed per request, so it is asked only after OSM has already failed —
+on real field-visit addresses that is roughly half of lookups, on town-to-town journeys almost none.
+
+The confidence floor, not the not-found case, is what this profile is for. OpenStreetMap's expensive
+failure is a confident *wrong* answer: "Apex Hospital, Agra" returned a hospital in Nashik, 1,000 km away.
+That is a low-confidence match rather than an error, so a fallback that fires only on "not found" would
+keep the wrong coordinate and route a driver to it.
+
+If Google is unusable — no key, quota spent, outage — a weak OSM match is kept rather than discarded, so
+turning this profile on can never resolve fewer addresses than leaving it off.
+
+This profile uses its own geocode-cache namespace, so the first run after switching re-geocodes
+everything: entries cached under the plain OSM geocoder include low-confidence matches accepted before the
+fallback existed, and reusing them would bypass it.
 
 **Commercial** — Google or Mapbox for geocoding and routing (a key is needed; OSM still supplies road
 features and elevation):

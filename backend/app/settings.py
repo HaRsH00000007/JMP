@@ -49,10 +49,11 @@ class Settings(BaseSettings):
     api_auth_token: SecretStr | None = None  # when set, every /api/v1 call needs "Authorization: Bearer <token>"
 
     # --- providers (D-09) ----------------------------------------------------------------------
-    geocoder: Literal["mock", "nominatim", "google", "mapbox"] = "mock"
+    geocoder: Literal["mock", "nominatim", "nominatim_photon", "photon", "google", "mapbox",
+                      "osm_google"] = "mock"
     route_provider: Literal["mock", "osrm", "google", "mapbox"] = "mock"
     feature_provider: Literal["mock", "overpass", "none"] = "mock"
-    elevation_provider: Literal["mock", "open_meteo", "none"] = "mock"
+    elevation_provider: Literal["mock", "open_meteo", "opentopodata", "none"] = "mock"
     places_provider: Literal["mock", "overpass", "none"] = "mock"
     route_provider_api_key: SecretStr | None = None  # Google / Mapbox key
     osrm_base_url: str = "https://router.project-osrm.org"
@@ -63,12 +64,18 @@ class Settings(BaseSettings):
         default="https://overpass.kumi.systems/api/interpreter,https://overpass.private.coffee/api/interpreter",
         validation_alias="OVERPASS_FALLBACK_URLS")
     open_meteo_url: str = "https://api.open-meteo.com/v1/elevation"
+    opentopodata_url: str = "https://api.opentopodata.org/v1/srtm90m"
+    photon_url: str = "https://photon.komoot.io/api/"
     provider_user_agent: str = "JMP-Generator/1.0 (EHS journey planning)"
     provider_timeout_s: float = 30.0
     # Overpass needs its own, longer timeout: these queries legitimately run for a minute or more, so the
     # 30 s that suits a geocoder would cut off healthy responses and retry them forever.
     overpass_timeout_s: float = 90.0
     geocode_region_hint: str = "in"
+    # osm_google only: a match at or above this confidence is accepted from OpenStreetMap; below it,
+    # Google is asked as well. Not-found and ambiguous always fall through regardless. The floor is the
+    # point of the fallback — OSM's costly failure is a confident wrong answer, not a missing one.
+    geocode_fallback_min_confidence: float = 0.8
     # Elevation providers charge per coordinate, so this — not the route length — is what a long route costs
     # against an hourly quota. Above it the sampling step widens; 0 disables the cap.
     elevation_max_samples: int = 200
@@ -76,6 +83,14 @@ class Settings(BaseSettings):
     # rest verbatim as stops requiring verification. Never invents a coordinate, and the start and end must
     # still resolve. Off by default — with it on, a plan's measurements cover only part of the itinerary.
     allow_unverified_stops: bool = False
+    # With ALLOW_UNVERIFIED_STOPS on, a journey where fewer than two stops can be located has no route to
+    # measure. Instead of failing the row, issue a text-only plan: every stop printed verbatim, no distance,
+    # score, segment or hazard position, and the whole hazard library as a checklist to confirm. Off by default.
+    text_only_fallback: bool = False
+    # With ALLOW_UNVERIFIED_STOPS on, a stop that cannot be found as written is placed at an area named in its
+    # own text, else at the row's city — area results only, never a facility — and marked approximate. This
+    # keeps rows on the full plan layout; distances to such stops are area-level. Off by default.
+    area_level_fallback: bool = False
     route_cache_ttl_days: int = 30
 
     # --- Claude (D-13) --------------------------------------------------------------------------
@@ -88,6 +103,17 @@ class Settings(BaseSettings):
     anthropic_timeout_s: float = 180.0
     anthropic_sdk_max_retries: int = 2
     anthropic_fallbacks_enabled: bool = True
+    # Cost-optimized narrative mode (LLM_COST_OPTIMIZED=true): routine narratives use LLM_ECONOMY_MODEL at
+    # LLM_ECONOMY_EFFORT (the task is bounded prose over computed facts, checked by a strict validator); only the
+    # final retry of a narrative that keeps failing validation escalates to ANTHROPIC_MODEL / ANTHROPIC_EFFORT.
+    # Off = every call uses ANTHROPIC_MODEL at ANTHROPIC_EFFORT, as before.
+    llm_cost_optimized: bool = False
+    llm_economy_model: str = "claude-sonnet-5"
+    llm_economy_effort: Literal["low", "medium", "high", "xhigh", "max"] = "low"
+    llm_escalate_final_attempt: bool = True
+    # Render the document once with a template narrative before paying for the real one, so a journey whose
+    # layout cannot fit (long stop lists, many verification rows) fails before any Claude spend.
+    llm_preflight_render: bool = True
     llm_max_attempts: int = 3
     llm_concurrency: int = 4  # worker concurrency of the "llm" queue
     bulk_llm_mode: Literal["realtime", "batch"] = "realtime"
