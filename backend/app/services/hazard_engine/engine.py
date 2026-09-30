@@ -10,6 +10,16 @@ from app.services.hazard_engine.detectors import REGISTRY, DetectionContext
 from app.services.hazard_library import HazardLibrary, control_items, short_control
 
 
+# Detector kinds whose evidence comes from map features (OSM tags: crossings, bridges, junctions, built-up
+# land, schools/markets, road attributes). With no feature provider (FEATURE_PROVIDER=none) a "no" from one of
+# these means "not looked for", never "not present", so the hazard is listed for operational verification.
+FEATURE_EVIDENCE_KINDS = {"narrow_road", "surface_quality", "speed_breaker", "point_feature", "level_crossing",
+                          "missing_signage", "area_feature", "pedestrian", "ghat", "remote_area", "blind_curve"}
+# Kinds whose *inference* reads a feature-derived figure (the built-up share), so without features even a
+# positive result would rest on a zero that was never measured.
+FEATURE_ONLY_INFERENCE_KINDS = {"remote_area"}
+
+
 def display_band_for(severity_band: str, matrix_zone: str) -> str:
     cfg = rules_config.risk_matrix()
     if cfg.get("display_band_method") == "matrix_zone":
@@ -50,12 +60,17 @@ def run_hazard_engine(
     not_applicable: list[str] = []
     verification: list[VerificationItem] = []
 
+    unassessed: list[str] = []  # map-dependent hazards that could not be looked for (no feature provider)
     for hz in library.hazards:
         profile = rules["detectors"].get(hz.code)
         if not profile:
             not_applicable.append(hz.code)
             continue
         det = REGISTRY[profile["kind"]](ctx, profile)
+        if features is None and profile["kind"] in FEATURE_EVIDENCE_KINDS and (
+                not det.applicable or profile["kind"] in FEATURE_ONLY_INFERENCE_KINDS):
+            unassessed.append(hz.name)
+            continue
         if det.verify_item:
             verification.append(VerificationItem(item=det.verify_item, reason=det.verify_reason or "", source="rule"))
         if not det.applicable:
@@ -96,6 +111,11 @@ def run_hazard_engine(
     if not facts.travel.vehicle_type_specified:
         verification.append(VerificationItem(item="Vehicle type (controls assume 4-Wheeler)",
                                              reason="Vehicle type not specified in the journey brief", source="rule"))
+    if unassessed:
+        verification.insert(0, VerificationItem(
+            item="Map-dependent hazards along the route: " + "; ".join(unassessed),
+            reason="Not assessed — no map-feature data was available for this plan, so these could be neither "
+                   "detected nor ruled out; confirm on the route before travel", source="rule"))
     if facts.is_demo_data:
         verification.insert(0, VerificationItem(item="Entire route analysis — generated from DEMO provider data",
                                                 reason="Mock providers were used; not for operational use",

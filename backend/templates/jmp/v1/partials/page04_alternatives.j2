@@ -28,7 +28,7 @@
   <tr><th style="width:20%">Parameter</th><th>Primary Route</th>{% for a in r.alternatives %}<th>Alternative {{ a.alt.id }}</th>{% endfor %}</tr>
   <tr><td>Distance</td><td>{{ r.route.distance_range_km[0] }}–{{ r.route.distance_range_km[1] }} km (baseline)</td>{% for a in r.alternatives %}<td>{{ '%+.1f' % a.alt.delta_km }} km on {{ a.alt.leg_label }}</td>{% endfor %}</tr>
   <tr><td>Time</td><td>Baseline</td>{% for a in r.alternatives %}<td>{{ '%+.0f' % a.alt.delta_min }} min</td>{% endfor %}</tr>
-  <tr><td>Traffic</td><td>{{ r.route.exposures.traffic_level | title }}</td>{% for a in r.alternatives %}<td>Not assessed</td>{% endfor %}</tr>
+  <tr><td>Traffic</td><td>{{ (r.route.exposures.traffic_level | title) if r.route.features_available else 'Not assessed' }}</td>{% for a in r.alternatives %}<td>Not assessed</td>{% endfor %}</tr>
   <tr><td>Safety</td><td class="band band-LOW bg-LOW">PREFERRED</td>{% for a in r.alternatives %}<td class="band band-MEDIUM bg-MEDIUM">CONTINGENCY</td>{% endfor %}</tr>
   <tr><td>Complexity</td><td>{{ r.route.complexity | title }}</td>{% for a in r.alternatives %}<td>Not assessed</td>{% endfor %}</tr>
   <tr><td>Recommendation</td><td>Default route</td>{% for a in r.alternatives %}<td>{{ a.use_when }}</td>{% endfor %}</tr>

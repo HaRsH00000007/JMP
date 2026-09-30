@@ -39,3 +39,19 @@ frontend/tsconfig.tsbuildinfo
 .idea/
 .vscode/
 .DS_Store
+
+# ---------------------------------------------------------------------------------------------
+# The client's own mobile backend, checked out here for reference. It is a separate repository
+# with its own .git, and its git history contains live third-party API credentials. This
+# repository is public — never commit it.
+# ---------------------------------------------------------------------------------------------
+JMP_App/
+
+# ---------------------------------------------------------------------------------------------
+# Analysis documents and generated reports: shared with the client directly, not through git.
+# ---------------------------------------------------------------------------------------------
+/*.pdf
+reports/
+
+# Build artefacts
+*.egg-info/

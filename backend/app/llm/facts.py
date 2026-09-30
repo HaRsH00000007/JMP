@@ -20,7 +20,7 @@ def _hm(minutes: float) -> str:
 def build_facts_payload(jf: JourneyFacts) -> dict[str, Any]:
     r = jf.route
     s = jf.scores
-    return {
+    payload: dict[str, Any] = {
         "is_demo_data": r.is_demo_data,
         "route_name": r.route_name,
         "region": r.region_label,
@@ -53,6 +53,14 @@ def build_facts_payload(jf: JourneyFacts) -> dict[str, Any]:
             "level_crossings": r.exposures.level_crossings,
             "level_crossing_places": r.exposures.level_crossing_places,
             "settlements": r.exposures.settlements, "seasonal": r.exposures.seasonal_flags,
+        } if r.features_available else {
+            # no map-feature provider ran: these were never measured, so they are not sent as zeros
+            "map_features": "NOT ASSESSED - no map-feature data; do not state or imply presence or absence of "
+                            "level crossings, bridges, junctions, built-up areas, settlements, schools or markets",
+            "built_up_share_pct": "not assessed", "highway_share_pct": r.exposures.highway_share_pct,
+            "pedestrian": "not assessed", "hcv": r.exposures.hcv_level, "traffic": "not assessed",
+            "busy_junctions": "not assessed", "level_crossings": "not assessed", "level_crossing_places": [],
+            "settlements": "not assessed", "seasonal": r.exposures.seasonal_flags,
         },
         "travel": {
             "vehicle_type": r.travel.vehicle_type, "vehicle_type_specified": r.travel.vehicle_type_specified,
@@ -84,6 +92,31 @@ def build_facts_payload(jf: JourneyFacts) -> dict[str, Any]:
         "verification_items": [v.item for v in jf.verification],
         "emergency_directory_types": sorted({d.type for d in jf.emergency.directory}),
     }
+    payload = _compact(payload)
+    # Tell the model up front which hazard phrases the validator will reject for this route, instead of
+    # finding out on a paid retry (the most common retry cause after word limits).
+    payload["excluded_hazard_terms"] = excluded_hazard_terms(payload)
+    return payload
+
+
+def _compact(obj: Any) -> Any:
+    """Drop None values (and the keys holding them) — they carry no information for the narrative. Lists and
+    empty lists are kept: the validator checks coverage against them."""
+    if isinstance(obj, dict):
+        return {k: _compact(v) for k, v in obj.items() if v is not None}
+    if isinstance(obj, list):
+        return [_compact(v) for v in obj]
+    return obj
+
+
+def excluded_hazard_terms(payload: dict[str, Any]) -> list[str]:
+    """Phrases naming non-candidate library hazards that do not already appear in the facts (validator rule)."""
+    from app.llm.validator import _HAZARD_PHRASES, facts_text_for_validation
+
+    candidates = {h["code"] for h in payload["candidate_hazards"]}
+    facts_text = facts_text_for_validation(payload)
+    return sorted({ph for code, phrases in _HAZARD_PHRASES.items() if code not in candidates
+                   for ph in phrases if ph not in facts_text})
 
 
 def facts_message(payload: dict[str, Any]) -> str:

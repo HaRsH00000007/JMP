@@ -9,7 +9,7 @@
 <div class="gap-row"></div>
 <table class="t">
   <tr><th>Journey ID</th><th>Route</th><th>Region</th><th>Journey Type</th><th>Status</th><th>Version</th></tr>
-  <tr><td>{{ r.meta.journey_code }}</td><td>{{ r.route.route_name }} ({{ r.route.waypoint_count }} pts)</td><td>{{ r.route.region_label }}</td>
+  <tr><td>{{ r.meta.journey_code }}</td><td>{{ r.route.route_name }} ({{ r.route.itinerary | length if r.route.itinerary else r.route.waypoint_count }} stops)</td><td>{{ r.route.region_label }}</td>
       <td>{{ r.route.journey_type }}</td><td class="band band-MEDIUM bg-MEDIUM">{{ r.scores.decision }}</td><td>{{ r.meta.version_label }}</td></tr>
 </table>
 
@@ -20,7 +20,11 @@
 <div class="tiles cols-4">
   {{ c.tile(icon('route', 9) ~ ' Distance', r.route.distance_range_km[0] ~ '–' ~ r.route.distance_range_km[1] ~ ' km', 'ASSESSMENT') }}
   {{ c.tile(icon('clock', 9) ~ ' Driving time', (r.route.duration_range_min[0] | hm) ~ '–' ~ (r.route.duration_range_min[1] | hm), 'ASSESSMENT') }}
+  {% if r.route.itinerary and r.route.itinerary | length != r.route.waypoint_count %}
+  {{ c.tile(icon('pin', 9) ~ ' Stops', r.route.itinerary | length, 'as submitted · ' ~ r.route.waypoint_count ~ ' on route') }}
+  {% else %}
   {{ c.tile(icon('pin', 9) ~ ' Stops', r.route.intermediate_stops ~ (' + return' if r.route.is_round_trip else ''), r.route.waypoint_count ~ ' waypoints') }}
+  {% endif %}
   {{ c.tile(icon('alert', 9) ~ ' Risk level', r.scores.risk_level, 'Subject to validation', 'band-' ~ r.scores.risk_level) }}
 </div>
 <div class="gap-row"></div>
@@ -31,27 +35,26 @@
   {{ c.tile(icon('shield', 9) ~ ' Status', r.scores.decision, 'Pending sign-off', 'band-MEDIUM') }}
 </div>
 
+{# JOURNEY TIMELINE (as in the base document): every submitted stop, exactly as written, in order. #}
+{% set wps = {} %}{% for w in r.route.waypoints %}{% set _ = wps.update({w.seq: w}) %}{% endfor %}
+{% set stops = [] %}
+{% if r.route.itinerary %}
+{% for s in r.route.itinerary %}{% set w = wps.get(s.waypoint_seq) %}{% set _ = stops.append({'n': s.position, 'kind': s.kind, 'text': s.input_text, 'inst': w.is_institutional if w else false, 'missing': s.status == 'not_located'}) %}{% endfor %}
+{% else %}
+{% for w in r.route.waypoints %}{% set _ = stops.append({'n': w.seq, 'kind': w.kind, 'text': w.short_name, 'inst': w.is_institutional, 'missing': false}) %}{% endfor %}
+{% endif %}
 {{ c.h2('JOURNEY TIMELINE') }}
-{% set n = r.route.waypoints | length %}
+{% set n = stops | length %}
 {% set per_row = n if n <= 15 else ((n + 1) // 2) %}
 <div class="timeline" style="grid-template-columns: repeat({{ per_row }}, 1fr)">
-{% for w in r.route.waypoints %}
-  <div class="chip {{ 'se' if w.kind in ('start', 'end') }} {{ 'inst' if w.is_institutional }}">{{ '%02d' % w.seq }} {{ w.short_name }}</div>
+{% for s in stops %}
+  <div class="chip {{ 'se' if s.kind in ('start', 'end') }} {{ 'inst' if s.inst }}"{% if s.missing %} style="border:1px dashed #1A396A"{% endif %}>{{ '%02d' % s.n }} {{ s.text }}</div>
 {% endfor %}
 </div>
 <div class="caption">{{ r.meta.classification_note }}</div>
-
 {% if r.route.unverified_stops %}
-{{ c.h2('STOPS SUBMITTED BUT NOT LOCATED — NOT COVERED BY THIS ASSESSMENT') }}
-<table class="t compact">
-  <tr><th style="width:4%">#</th><th style="width:14%">Position</th><th>Address exactly as submitted</th><th style="width:26%">Why it is not on the route</th></tr>
-  {% for u in r.route.unverified_stops %}
-  <tr><td>{{ loop.index }}</td><td class="status-REQUIRES_VERIFICATION">{{ u.kind | upper }}</td><td>{{ u.input_text }}</td><td>{{ u.reason }}</td></tr>
-  {% endfor %}
-</table>
-<div class="caption">The distances, times, exposures, hazards and score in this plan are measured through the
-{{ r.route.waypoint_count }} located waypoint(s) only and do <b>not</b> include the {{ r.route.unverified_stops | length }}
-stop(s) above. No position has been assumed for them. Confirm each one before travel — see Page 6.</div>
+<div class="caption">Dashed stops could not be placed on the map; distances, times, hazards and score are measured through the
+{{ r.route.waypoint_count }} located point(s) only. Confirm them before travel — see Page 6.</div>
 {% endif %}
 
 {{ c.h2('DATA CLASSIFICATION') }}

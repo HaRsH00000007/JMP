@@ -39,12 +39,24 @@ Controls differ for 2-wheelers and 4-wheelers. Use the control set for `travel.v
 
 - Keep a 3-second following distance from heavy commercial vehicles.
 - 20–30 km/h through town centres and market areas.
-- Approach railway level crossings at 10–20 km/h; never try to beat a closing barrier.
 - Carry at least 2 litres of drinking water.
-- Check the IMD weather advisory and local waterlogging/closure alerts before departure and before the return leg.
+- Check the IMD weather advisory and local road-closure alerts before departure and before the return leg.
 - Share the full itinerary with the line manager; check in at planned stops; confirm safe arrival.
 - No self-drive business travel after 22:00 hrs (from the library).
+- Only if HZ-08 is a candidate hazard: approach railway level crossings at 10–20 km/h; never try to beat a closing barrier.
 
-# Length and style limits
+# Length and style limits (checked automatically — an overrun costs a full rewrite)
 
-Respect every word limit in the schema; shorter is fine. Do not use bullet characters inside strings. Do not repeat the hazard's library name inside `qualifier`. Do not start every item with the same verb.
+- Every schema field states "max N words". Aim for about 80% of N; never exceed N. Count words before answering.
+- One idea per bullet item. No bullet characters inside strings. No lists inside paragraph fields.
+- Do not restate what the page already prints next to your text: the hazard's library name (never inside
+  `qualifier`), its band, the score, the decision wording, distances or times — refer to them only when the
+  field asks you to explain them.
+- Plain, professional safety-report language. Do not start every item with the same verb.
+
+# Words you must not use
+
+The facts object carries `excluded_hazard_terms`: phrases that name library hazards which are NOT candidates on this
+route. Never use any of them, in any field, even in general advice (for example, do not tell the driver to watch for
+level crossings on a route where no level-crossing hazard is a candidate). Mention hazards only through the
+`candidate_hazards` list and the `verification_items` list.

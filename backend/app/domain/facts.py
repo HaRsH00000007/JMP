@@ -45,6 +45,20 @@ class UnverifiedStop(BaseModel):
     error_code: str
 
 
+class ItineraryStop(BaseModel):
+    """One submitted stop, in submitted order, exactly as written — whether or not it is on the measured route.
+
+    This is what the document prints as the journey's stops. The measured route (waypoints) can be shorter:
+    a stop that was not located, or that is the same point as the one before it, is not a route vertex.
+    """
+
+    position: int  # 1-based, in the order submitted
+    kind: Literal["start", "stop", "end"]
+    input_text: str
+    status: Literal["located", "same_as_previous", "not_located"]
+    waypoint_seq: int | None = None  # the measured waypoint this stop is, or shares a point with
+
+
 class LegFact(BaseModel):
     from_seq: int
     to_seq: int
@@ -157,6 +171,10 @@ class RouteFacts(BaseModel):
     is_demo_data: bool
     provider_warnings: list[str] = Field(default_factory=list)
     unverified_stops: list[UnverifiedStop] = Field(default_factory=list)
+    itinerary: list[ItineraryStop] = Field(default_factory=list)  # every submitted stop, verbatim, in order
+    # False when no map-feature provider ran (FEATURE_PROVIDER=none): feature-derived exposures below are then
+    # zero for want of data, not measured as zero, and are printed as "not assessed".
+    features_available: bool = True
 
 
 class HazardLocation(BaseModel):

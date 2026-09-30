@@ -21,7 +21,7 @@ from app.services.emergency import build_emergency
 from app.services.hazard_engine import run_hazard_engine
 from app.services.hazard_library import HazardLibrary
 from app.services.report_assembler import ReportModel, assemble_report
-from app.services.route_service import analyse_route, geocode_all, geocode_best_effort
+from app.services.route_service import analyse_route, full_itinerary, geocode_all, geocode_best_effort
 from app.services.scoring import compute_scores
 from app.settings import settings
 from app.versions import VersionStamp
@@ -37,6 +37,7 @@ class JourneyOptions:
     emergency_contact: str | None = None
     nearest_hospital: str | None = None
     nearest_police: str | None = None
+    city_hint: str | None = None  # geocoding hint only; never printed in place of a stop
 
 
 def compute_facts(inputs: list[str], opts: JourneyOptions, providers: Providers, library: HazardLibrary,
@@ -44,17 +45,20 @@ def compute_facts(inputs: list[str], opts: JourneyOptions, providers: Providers,
                   allow_unverified_stops: bool | None = None) -> JourneyFacts:
     unverified: list[UnverifiedStop] = []
     collapsed: list[str] = []
+    itinerary = full_itinerary(inputs)
     if geocoded is None:
         if allow_unverified_stops if allow_unverified_stops is not None else settings().allow_unverified_stops:
-            best = geocode_best_effort(inputs, providers, session)
+            best = geocode_best_effort(inputs, providers, session, opts.city_hint,
+                                       area_fallback=settings().area_level_fallback)
             inputs, geocoded, unverified = best.texts, best.located, best.unverified
-            collapsed = best.collapsed
+            collapsed, itinerary = best.collapsed, best.itinerary
         else:
-            geocoded = geocode_all(inputs, providers, session)
+            geocoded = geocode_all(inputs, providers, session, opts.city_hint)
     facts, route, fs, elev = analyse_route(
         inputs=inputs, geocoded=geocoded, providers=providers, vehicle_type=opts.vehicle_type,
         vehicle_type_specified=opts.vehicle_type_specified, travel_date=opts.travel_date,
         depart_time=opts.depart_time, session=session)
+    facts.itinerary = itinerary
     hazards, not_applicable, verification = run_hazard_engine(library, facts, route, fs, elev)
     if collapsed:
         facts.provider_warnings.append(

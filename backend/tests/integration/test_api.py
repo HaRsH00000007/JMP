@@ -43,13 +43,18 @@ def test_individual_generation_end_to_end(client):
     assert job["route"] == ZIRAKPUR
     doc = client.get(f"/api/v1/documents/{job['document_id']}").json()
     assert doc["page_count"] == 8
-    assert doc["versions"] == {"template": "1.1", "hazard_library": "1.0", "prompt": "1.0", "schema": "1.0",
+    assert doc["versions"] == {"template": "1.1", "hazard_library": "1.0", "prompt": "1.1", "schema": "1.0",
                                "scoring": "1.0", "rules": "1.0", "app": "1.0.0"}
     assert doc["report_json"]["meta"]["demo_data"] is True
     rows = doc["report_json"]["emergency_directory"]
     assert any(r["name"] == "Supplied Hospital, Dera Bassi" and r["status"] == "PROVIDED" for r in rows)
     pdf = client.get(f"/api/v1/documents/{job['document_id']}/download")
     assert pdf.status_code == 200 and pdf.headers["content-type"] == "application/pdf"
+    from app.db.models import JmpDocument
+    from app.db.session import session_scope as _ss
+    with _ss() as _db:
+        stored = _db.get(JmpDocument, __import__("uuid").UUID(job["document_id"]))
+        assert stored.html_path.startswith("html/") and stored.pdf_path.startswith("documents/")
     assert len(pymupdf.open(stream=pdf.content, filetype="pdf")) == 8
     lst = client.get("/api/v1/documents", params={"q": "lalru"}).json()
     assert any(d["document_id"] == job["document_id"] for d in lst["items"])
@@ -198,3 +203,64 @@ def test_docs_urls_and_redirects(client):
         r = client.get(path, follow_redirects=False)
         assert r.status_code in (307, 308), path
         assert r.headers["location"].startswith("/api/"), path
+
+
+def test_text_only_fallback_completes_a_journey_with_no_measurable_route(client):
+    """With TEXT_ONLY_FALLBACK on, a journey with fewer than two located stops completes as a text-only
+    document instead of failing — and it is recorded as NOT ASSESSED, never with a score."""
+    from app.settings import get_settings, set_settings
+
+    set_settings(get_settings().model_copy(update={"allow_unverified_stops": True, "text_only_fallback": True}))
+    try:
+        body = {"start_location": "Mani Clinic, opposite old bus stand", "end_location": "Zirakpur",
+                "vehicle_type": "4W"}
+        job_id = client.post("/api/v1/journeys/generate", json=body).json()["job_id"]
+        job = client.get(f"/api/v1/jobs/{job_id}").json()
+        assert job["status"] == "completed", job
+        doc = client.get(f"/api/v1/documents/{job['document_id']}").json()
+        assert doc["risk_level"] == "NOT ASSESSED" and doc["journey_score"] is None
+        pdf = client.get(f"/api/v1/documents/{job['document_id']}/download")
+        pages = [p.get_text() for p in pymupdf.open(stream=pdf.content, filetype="pdf")]
+        assert len(pages) == 3 and "Mani Clinic, opposite old bus stand" in pages[0]
+        rr = client.post(f"/api/v1/documents/{job['document_id']}/rerender")
+        assert rr.status_code == 201, rr.text
+    finally:
+        set_settings(None)
+
+
+def test_resume_narratives_keeps_analysis_and_recounts_rows(client):
+    """Rows that failed at the narrative stage (e.g. credit exhausted) resume from the saved analysis: no
+    re-analysis, the row is counted once, and the batch total stays consistent."""
+    import uuid as _uuid
+
+    from app.cli import resume_narratives as rn
+    from app.db.models import BulkItemStatus, BulkJob, BulkJobItem, GenerationJob, JobStage, JobStatus
+    from app.db.session import session_scope
+
+    up = client.post("/api/v1/bulk-jobs/validate", files={"file": ("r.csv", _csv(BULK_ROWS[:2]), "text/csv")}).json()
+    bid = _uuid.UUID(client.post("/api/v1/bulk-jobs", data={"upload_id": up["upload_id"]}).json()["job_id"])
+    with session_scope() as db:  # simulate: row 1 analysed, then the narrative call failed
+        it = db.scalars(select_items(bid)).first()
+        g = db.get(GenerationJob, it.generation_job_id)
+        facts_before = g.report_facts
+        g.narrative_json, g.document_id, g.status, g.error_code = None, None, JobStatus.failed, "LLM_NOT_CONFIGURED"
+        g.stage = JobStage.narrative
+        it.status, it.document_id = BulkItemStatus.failed, None
+        bj = db.get(BulkJob, bid)
+        bj.succeeded, bj.failed = bj.succeeded - 1, bj.failed + 1
+        item_id, job_id = it.id, g.id
+    assert (item_id, job_id) in [(a, b) for a, b, _ in rn.pending(bid)]
+    [res] = rn.run(bid, [(item_id, job_id, "B-001")])
+    assert res["status"] == "completed" and res["pages"] == 8 and res["itinerary_matches"]
+    with session_scope() as db:
+        assert db.get(GenerationJob, job_id).report_facts == facts_before  # analysis reused, not redone
+        bj = db.get(BulkJob, bid)
+        assert (bj.processed, bj.succeeded) == (bj.valid_rows, bj.valid_rows - bj.failed)
+
+
+def select_items(bid):
+    from sqlalchemy import select
+
+    from app.db.models import BulkJobItem
+
+    return select(BulkJobItem).where(BulkJobItem.bulk_job_id == bid).order_by(BulkJobItem.row_number)

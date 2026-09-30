@@ -31,7 +31,8 @@ class MockNarrativeProvider:
     name = "mock"
     model = "mock"
 
-    def call(self, prefix: StaticPrefix, messages: list[dict[str, Any]], *, max_tokens: int) -> LlmCallResult:
+    def call(self, prefix: StaticPrefix, messages: list[dict[str, Any]], *, max_tokens: int,
+             model: str | None = None, effort: str | None = None) -> LlmCallResult:
         content = messages[0]["content"]
         text = content if isinstance(content, str) else content[0]["text"]
         payload = json.loads(_FACTS_RE.search(text).group(0))  # type: ignore[union-attr]

@@ -33,6 +33,10 @@ os.environ.update({
     "TEMPLATE_VERSION": "1.1",
     "OUTPUT_FOLDER": "",
     "ALLOW_UNVERIFIED_STOPS": "false",
+    "TEXT_ONLY_FALLBACK": "false",
+    "LLM_COST_OPTIMIZED": "false",
+    "LLM_PREFLIGHT_RENDER": "false",
+    "AREA_LEVEL_FALLBACK": "false",
     "ANTHROPIC_API_KEY": "",
     "API_AUTH_TOKEN": "",
 })

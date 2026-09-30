@@ -127,10 +127,10 @@ def test_versions_and_no_sign_off(rendered):
     p8 = " ".join(rendered["pages"][7].split())
     for k in ("Prepared By", "Reviewed By", "Approved By", "Name / Date / Signature"):
         assert k not in p8  # no sign-off block (template v1.1)
-    assert "Template v1.1" in p8 and "Hazard library v1.0" in p8 and "Prompt v1.0" in p8
+    assert "Template v1.1" in p8 and "Hazard library v1.0" in p8 and "Prompt v1.1" in p8
     assert "112" in p8 and "VERIFIED" in p8
     meta = rendered["doc"].metadata
-    assert "template_version=1.1" in meta["keywords"] and "prompt_version=1.0" in meta["keywords"]
+    assert "template_version=1.1" in meta["keywords"] and "prompt_version=1.1" in meta["keywords"]
 
 
 def test_no_overflow_on_short_and_long_routes(library, providers, db):
@@ -184,7 +184,7 @@ def test_unlocated_stops_are_printed_verbatim_and_excluded_from_measurement(libr
     doc = pymupdf.open(stream=pdf.pdf, filetype="pdf")
     page2 = doc[1].get_text()
     assert "Mani Clinic, opposite old bus stand" in page2
-    assert "NOT LOCATED" in page2.upper()
+    assert "COULD NOT BE PLACED" in page2.upper()
     assert pdf.page_count == 8, "the extra block pushed page 2 into an overflow"
 
 
@@ -216,3 +216,70 @@ def test_dropping_a_stop_does_not_strand_two_identical_ones(library, providers, 
     with pytest.raises(GeocodeError, match="two distinct stops"):
         compute_facts(["Zirakpur", "Mani Clinic, opposite old bus stand", "Zirakpur"],
                       JourneyOptions(), providers, library, db, allow_unverified_stops=True)
+
+
+def test_text_only_plan_prints_every_stop_and_measures_nothing(library, providers, db):
+    """Fewer than two located stops (TEXT_ONLY_FALLBACK): a plan is still issued, but it carries no measured or
+    estimated number — only the stops as submitted, the library as a checklist, and emergency details."""
+    from app.services.route_service import TooFewLocatedStops, geocode_best_effort
+    from app.services.text_only import build_text_only, render_text_only
+
+    inputs = ["Mani Clinic, opposite old bus stand", "Zirakpur", "Shepherd Nursing Home (Kolathur)"]
+    with pytest.raises(TooFewLocatedStops) as ei:
+        geocode_best_effort(inputs, providers, db)
+    exc = ei.value
+    assert [t for t, _ in exc.located] == ["Zirakpur"]
+    report = build_text_only(inputs, JourneyOptions(vehicle_type="2W", vehicle_type_specified=True), library,
+                             journey_code="DAN-JMP-PB-901", versions=current_versions(library.version),
+                             located=exc.located, unverified=exc.unverified, collapsed=exc.collapsed,
+                             reason=exc.message, geocoder=providers.geocoder.name)
+    assert [s.input_text for s in report.stops] == inputs, "stops must be printed verbatim and in order"
+    assert len(report.hazards) == len(library.hazards)
+    _, pdf = render_text_only(report)
+    assert pdf.page_count == 3
+    pages = [p.get_text() for p in pymupdf.open(stream=pdf.pdf, filetype="pdf")]
+    assert "ROUTE NOT MEASURED" in pages[0]
+    for text in inputs:
+        assert text in pages[0]
+    assert " km" not in "".join(pages), "a text-only plan must not print a distance"
+    assert "NOT ASSESSED" in pages[2]
+
+
+def test_stops_are_printed_exactly_as_submitted_in_order(library, providers, db):
+    """The document names every stop by the text the user submitted — never the geocoder's name for the point
+    it resolved to — and lists all of them in submitted order, located or not."""
+    inputs = ["zirakpur", "Mani Clinic, opposite old bus stand", "Lalru"]
+    facts = compute_facts(inputs, JourneyOptions(), providers, library, db, allow_unverified_stops=True)
+    assert [w.short_name for w in facts.route.waypoints] == ["zirakpur", "Lalru"]
+    assert [(s.input_text, s.status) for s in facts.route.itinerary] == [
+        ("zirakpur", "located"), ("Mani Clinic, opposite old bus stand", "not_located"), ("Lalru", "located")]
+    _, pdf = render_document(_report(facts, library))
+    page2 = pymupdf.open(stream=pdf.pdf, filetype="pdf")[1].get_text()
+    table = page2[page2.upper().index("JOURNEY TIMELINE"):]
+    pos = [table.index(t) for t in ("zirakpur", "Mani Clinic, opposite old bus stand", "Lalru")]
+    assert pos == sorted(pos), "stops must appear in submitted order"
+
+
+def test_feature_provider_none_marks_map_hazards_for_verification_not_absent(library, providers, db):
+    """FEATURE_PROVIDER=none: nothing that needs map features may be presented as detected or as absent.
+    Map-dependent hazards go to the verification list; feature-derived exposures read "Not assessed"."""
+    from dataclasses import replace
+
+    from app.services.hazard_engine.engine import FEATURE_EVIDENCE_KINDS
+
+    no_features = replace(providers, features=None, places=None)
+    facts = compute_facts(PYRAGANDA_SHORT, JourneyOptions(travel_date=date(2026, 8, 8), depart_time="09:00"),
+                          no_features, library, db)
+    assert facts.route.features_available is False
+    rules = __import__("app.rules_config", fromlist=["hazard_rules"]).hazard_rules()["detectors"]
+    for h in facts.hazards:
+        kind = rules[h.code]["kind"]
+        assert not (kind in FEATURE_EVIDENCE_KINDS and h.evidence == "DETECTED"), h.code
+    assert any(v.item.startswith("Map-dependent hazards along the route:") for v in facts.verification)
+    _, pdf = render_document(_report(facts, library))
+    page3 = pymupdf.open(stream=pdf.pdf, filetype="pdf")[2].get_text()
+    assert "None detected" not in page3 and "Not assessed" in page3
+    assert pdf.page_count == 8
+
+
+PYRAGANDA_SHORT = ["Pyraganda", "Chakdah", "Kalyani"]

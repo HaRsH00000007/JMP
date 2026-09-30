@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass
 from app import rules_config
 from app.settings import settings
 
-PROMPT_VERSION = "1.0"   # bump whenever any static prompt block changes (enforced by a test)
+PROMPT_VERSION = "1.1"   # bump whenever any static prompt block changes (enforced by a test)
 SCHEMA_VERSION = "1.0"   # NarrativeV1
 
 

@@ -22,6 +22,15 @@ class Storage(Protocol):
     def size(self, key: str) -> int: ...
 
 
+def html_key_for(document_base: str) -> str:
+    """Where a document's HTML copy is kept: html/<same path>.html, not beside the PDF.
+
+    The documents folder is what gets handed over, and it should hold only the PDFs; the rendered HTML is an
+    audit copy nothing reads back (re-rendering uses the stored report JSON)."""
+    rest = document_base.split("documents/", 1)[1] if document_base.startswith("documents/") else document_base
+    return f"html/{rest}.html"
+
+
 def date_prefix(when: "datetime | None" = None) -> str:
     """Folder for a run's outputs: "<YYYY>/<DD_MM_YY>", e.g. 2026/23_09_26.
 

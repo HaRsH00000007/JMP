@@ -75,7 +75,7 @@ class MapNode:
     label: str
     lat: float
     lng: float
-    kind: str  # start | stop | end | institutional
+    kind: str  # start | stop | end | institutional | unplaced (drawn in sequence, position not verified)
 
 
 @dataclass
@@ -135,10 +135,15 @@ def route_map(geometry: Sequence[Coord], nodes: Sequence[MapNode], markers: Sequ
 
     for nd, (x, y) in zip(nodes, placed, strict=True):
         fill = {"start": GREEN, "end": GREEN, "institutional": RED}.get(nd.kind, NAVY if style != "light" else "#2F6DB5")
-        parts.append(f'<circle cx="{x}" cy="{y}" r="{node_r}" fill="{fill}" stroke="#fff" stroke-width="1.5"/>')
+        if nd.kind == "unplaced":  # hollow + dashed: shown in order along the route, position not verified
+            parts.append(f'<circle cx="{x}" cy="{y}" r="{node_r}" fill="#fff" stroke="{NAVY}" stroke-width="1.4" '
+                         f'stroke-dasharray="2.2 1.6"/>')
+        else:
+            parts.append(f'<circle cx="{x}" cy="{y}" r="{node_r}" fill="{fill}" stroke="#fff" stroke-width="1.5"/>')
         if style != "light":
+            num_col = NAVY if nd.kind == "unplaced" else "#fff"
             parts.append(f'<text x="{x}" y="{y + 2.6}" text-anchor="middle" font-size="{font - 0.6}" font-weight="700" '
-                         f'fill="#fff">{nd.seq:02d}</text>')
+                         f'fill="{num_col}">{nd.seq:02d}</text>')
         text = nd.label if style != "light" else f"{nd.seq} {nd.label}"
         tw = len(text) * font * 0.52
         th = font + 2
@@ -168,16 +173,22 @@ def route_map(geometry: Sequence[Coord], nodes: Sequence[MapNode], markers: Sequ
                      f'stroke-width=".8"/><path d="M0,-8 L3,3 L0,1 L-3,3 Z" fill="{NAVY}"/>'
                      f'<text y="-13" text-anchor="middle" font-size="7" fill="{MUTED}">N</text></g>')
     if show_legend:
-        lx, ly = 8, height - 44
         items = [(GREEN, "circle", "Start / End"), (NAVY if style != "light" else "#2F6DB5", "circle", "Waypoint"),
                  (RED, "circle", "Institutional stop"), (BAND_FILL["HIGH"], "tri", "Hazard (see pointers)")]
-        parts.append(f'<rect x="{lx}" y="{ly}" width="150" height="40" rx="3" fill="#fff" fill-opacity=".92" '
-                     f'stroke="#C7D4E7" stroke-width=".8"/>')
+        if any(nd.kind == "unplaced" for nd in nodes):
+            items.append((NAVY, "hollow", "Stop — not located, shown in order"))
+        rows = (len(items) + 1) // 2
+        lx, ly = 8, height - 8 - (rows * 16 - 4)
+        parts.append(f'<rect x="{lx}" y="{ly}" width="{150 if len(items) <= 4 else 212}" height="{rows * 16 - 4 + 4}" '
+                     f'rx="3" fill="#fff" fill-opacity=".92" stroke="#C7D4E7" stroke-width=".8"/>')
         for i, (col, shape, text) in enumerate(items):
             cx = lx + 10 + (i % 2) * 72
             cy = ly + 12 + (i // 2) * 16
             if shape == "circle":
                 parts.append(f'<circle cx="{cx}" cy="{cy}" r="4" fill="{col}"/>')
+            elif shape == "hollow":
+                parts.append(f'<circle cx="{cx}" cy="{cy}" r="4" fill="#fff" stroke="{col}" stroke-width="1.1" '
+                             f'stroke-dasharray="1.8 1.3"/>')
             else:
                 parts.append(f'<path d="M{cx},{cy - 5} L{cx + 4.5},{cy + 3} L{cx - 4.5},{cy + 3} Z" fill="{col}"/>')
             parts.append(f'<text x="{cx + 7}" y="{cy + 2.5}" font-size="6.2" fill="{MUTED}">{escape(text)}</text>')
@@ -297,15 +308,21 @@ def hazard_spine(stops: Sequence[SpineStop], pointers: Sequence[SpinePointer], t
         y = ky(st.km)
         col = GREEN if st.kind in ("start", "end") else (RED if st.kind == "institutional" else NAVY)
         r = 7 if st.kind in ("start", "end") else 4.5
-        parts.append(f'<circle cx="{spine_x}" cy="{y:.1f}" r="{r}" fill="{col}" stroke="#fff" stroke-width="1.5"/>')
+        if st.kind == "unplaced":
+            parts.append(f'<circle cx="{spine_x}" cy="{y:.1f}" r="{r}" fill="#fff" stroke="{NAVY}" '
+                         f'stroke-width="1.2" stroke-dasharray="1.8 1.3"/>')
+        else:
+            parts.append(f'<circle cx="{spine_x}" cy="{y:.1f}" r="{r}" fill="{col}" stroke="#fff" stroke-width="1.5"/>')
         if st.kind in ("start", "end"):
             parts.append(f'<text x="{spine_x}" y="{y + 2.3:.1f}" text-anchor="middle" font-size="5.2" '
                          f'font-weight="700" fill="#fff">{"S" if st.kind == "start" else "E"}</text>')
-        if y - last_label_y >= 9:
-            parts.append(f'<text x="{spine_x - 12}" y="{y - 5:.1f}" text-anchor="end" font-size="6.6" '
-                         f'font-weight="{"700" if st.kind in ("start", "end") else "400"}" fill="{NAVY_DEEP}">'
-                         f'{escape(st.label[:24])}</text>')
-            last_label_y = y
+        lines = _wrap(st.label, 28, 2)
+        if y - last_label_y >= 8 * len(lines) + 1:
+            for li, line in enumerate(lines):
+                parts.append(f'<text x="{spine_x - 12}" y="{y - 5 + li * 7.4:.1f}" text-anchor="end" font-size="6.4" '
+                             f'font-weight="{"700" if st.kind in ("start", "end") else "400"}" fill="{NAVY_DEEP}">'
+                             f'{escape(line)}</text>')
+            last_label_y = y + 7.4 * (len(lines) - 1)
     # callouts for located pointers
     located = [p for p in pointers if p.km_from is not None]
     box_x, box_w, box_h, gap = 186, width - 194, 58, 8

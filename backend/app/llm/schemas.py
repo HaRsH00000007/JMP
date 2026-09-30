@@ -7,6 +7,7 @@ unsupported constraints such as maxLength), and again by llm/validator.py semant
 from __future__ import annotations
 
 import copy
+import math
 import re
 from typing import Annotated, Any, Literal
 
@@ -15,13 +16,20 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 SCHEMA_VERSION = "1.0"
 
 
+def word_tolerance(limit: int) -> int:
+    """Overrun accepted without a rewrite: the prompt states the exact limit (and asks for ~80% of it), but a
+    field that lands one or two words over — the cause of most paid retries in the first real batch — is kept.
+    The layout absorbs it (pages scale up to 10% to fit); a genuinely long field is still rejected."""
+    return max(2, math.ceil(limit * 0.2))
+
+
 def _words(limit: int):  # noqa: ANN202
     def check(v: str) -> str:
         v = " ".join(v.split())
         if not v:
             raise ValueError("must not be empty")
         n = len(v.split())
-        if n > limit:
+        if n > limit + word_tolerance(limit):
             raise ValueError(f"has {n} words; maximum is {limit}")
         return v
 

@@ -84,6 +84,7 @@ _OVERPASS_SLOTS = threading.Semaphore(2)
 # HTTP 429. One elevation request at a time, spaced, keeps a whole batch inside the limit.
 _ELEVATION_RL = _RateLimiter(0.7)
 _ELEVATION_SLOT = threading.Semaphore(1)
+_OPENTOPO_RL = _RateLimiter(1.1)  # public api.opentopodata.org: 1 call/s, 1000/day
 
 
 def _overpass_json(client: HttpMixin, query: str) -> dict[str, Any]:
@@ -514,3 +515,98 @@ class OpenMeteoElevation(HttpMixin):
                 raise ProviderError("Open-Meteo returned an unexpected elevation payload")
             out.extend((round(d, 1), float(e)) for (d, _), e in zip(chunk, elev, strict=True))
         return ElevationProfile(provider=self.name, samples=out)
+
+
+class OpenTopoDataElevation(HttpMixin):
+    """SRTM elevation from OpenTopoData (public API: 100 points per call, 1 call/s, 1,000 calls/day).
+
+    Same sampling and output as OpenMeteoElevation, for when that service's daily quota is spent.
+    """
+
+    name = "opentopodata"
+
+    def profile(self, polyline: Sequence[Coord], sample_m: float) -> ElevationProfile:
+        samples = geo.resample([tuple(p) for p in polyline], sample_m)
+        out: list[tuple[float, float]] = []
+        for i in range(0, len(samples), 100):
+            chunk = samples[i:i + 100]
+            params = {"locations": "|".join(f"{c[0]:.5f},{c[1]:.5f}" for _, c in chunk)}
+            with _ELEVATION_SLOT:
+                _OPENTOPO_RL.wait()
+                data = self.request_json("GET", settings().opentopodata_url, params=params,
+                                         attempts=5, max_backoff_s=30.0)
+            results = data.get("results") if isinstance(data, dict) else None
+            if data.get("status") != "OK" or not isinstance(results, list) or len(results) != len(chunk):
+                raise ProviderError("OpenTopoData returned an unexpected elevation payload")
+            for (d, _), r in zip(chunk, results, strict=True):
+                if r.get("elevation") is None:  # no data (e.g. over water): skip the sample, never invent it
+                    continue
+                out.append((round(d, 1), float(r["elevation"])))
+        return ElevationProfile(provider=self.name, samples=out)
+
+
+_PHOTON_RL = _RateLimiter(0.6)
+_INDIA_BBOX = "68.1,6.5,97.4,35.7"
+
+
+class PhotonGeocoder(HttpMixin):
+    """Photon (photon.komoot.io): open-source geocoder over the same OpenStreetMap data as Nominatim.
+
+    Judged exactly like NominatimGeocoder: confidence 0.95 only when the returned place contains the queried
+    name, 0.6 otherwise, and 0.3 (rejected) when the query names a place ("…, Salem") the result is not in.
+    """
+
+    name = "photon"
+
+    def geocode(self, query: str, region_hint: str | None = None) -> GeocodeResult:
+        _PHOTON_RL.wait()
+        data = self.request_json("GET", settings().photon_url,
+                                 params={"q": query, "limit": 5, "bbox": _INDIA_BBOX})
+        feats = data.get("features") if isinstance(data, dict) else None
+        if not feats:
+            raise GeocodeError(f"Location not found: {query!r}", code=ErrorCode.GEOCODE_NOT_FOUND)
+        top = feats[0]
+        pr = top.get("properties", {})
+        lng, lat = top["geometry"]["coordinates"][:2]
+        label = ", ".join(str(pr[k]) for k in ("name", "street", "district", "city", "county", "state") if pr.get(k))
+        wanted = query.split(",")[0].strip().lower()
+        confidence = 0.95 if wanted and wanted in label.lower() else 0.6
+        area_text = " | ".join(str(pr[k]).lower() for k in ("city", "district", "locality", "county", "state")
+                               if pr.get(k))
+        context = [c.strip().lower() for c in query.split(",")[1:] if len(c.strip()) > 2]
+        if context and not any(c in area_text for c in context):
+            confidence = 0.3
+        return GeocodeResult(
+            query=query, name=pr.get("name") or label.split(",")[0] or query, lat=float(lat), lng=float(lng),
+            state=pr.get("state"), district=pr.get("county") or pr.get("district"),
+            locality=pr.get("city") or pr.get("locality") or pr.get("district"),
+            place_types=[t for t in (pr.get("osm_key"), pr.get("osm_value")) if t],
+            confidence=confidence, provider=self.name,
+            candidates=[{"name": f.get("properties", {}).get("name"), "lat": f["geometry"]["coordinates"][1],
+                         "lng": f["geometry"]["coordinates"][0]} for f in feats[:5]])
+
+
+class NominatimWithPhotonFallback:
+    """Nominatim first; Photon only when Nominatim is unavailable (rate limit / outage).
+
+    Keeps the name "nominatim" so the existing geocode cache is reused; every result still records the
+    provider that produced it (GeocodeResult.provider = "nominatim" or "photon").
+    """
+
+    name = "nominatim"
+
+    _PAUSE_S = 600.0  # after Nominatim refuses, go straight to Photon for this long, then try it again
+    _paused_until = 0.0
+
+    def __init__(self) -> None:
+        self.primary = NominatimGeocoder()
+        self.fallback = PhotonGeocoder()
+
+    def geocode(self, query: str, region_hint: str | None = None) -> GeocodeResult:
+        if time.monotonic() >= NominatimWithPhotonFallback._paused_until:
+            try:
+                return self.primary.geocode(query, region_hint)
+            except ProviderError:
+                NominatimWithPhotonFallback._paused_until = time.monotonic() + self._PAUSE_S
+        return self.fallback.geocode(query, region_hint)
+

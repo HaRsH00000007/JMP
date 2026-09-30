@@ -35,6 +35,9 @@ class JourneyRequest(BaseModel):
     emergency_contact: str | None = Field(default=None, max_length=200)
     nearest_hospital: str | None = Field(default=None, max_length=300)
     nearest_police: str | None = Field(default=None, max_length=300)
+    # Lookup hint only: a stop the geocoder cannot find as written is retried as "<stop>, <city>". The
+    # document always prints the stop exactly as submitted, never the hinted query.
+    city: str | None = Field(default=None, max_length=100)
     idempotency_key: str | None = Field(default=None, max_length=128)
 
     @field_validator("start_location", "end_location", mode="before")
@@ -89,9 +92,12 @@ class JourneyRequest(BaseModel):
             if len(st) < 3 or len(st) > 300:
                 raise ValueError(f"stops[{i}] must be 3–300 characters")
         seq = [self.start_location, *self.stops, self.end_location]
-        for i in range(len(seq) - 1):
-            if seq[i].lower() == seq[i + 1].lower():
-                raise ValueError(f"consecutive locations {i + 1} and {i + 2} are identical")
+        # With unverified stops allowed, a repeated stop is kept as submitted: the route collapses it to one
+        # point and the document still lists it twice, as the itinerary was written.
+        if not s.allow_unverified_stops:
+            for i in range(len(seq) - 1):
+                if seq[i].lower() == seq[i + 1].lower():
+                    raise ValueError(f"consecutive locations {i + 1} and {i + 2} are identical")
         return self
 
     @property

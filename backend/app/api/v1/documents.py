@@ -15,8 +15,9 @@ from app.errors import NotFoundError
 from app.services.jobs import bulk_route_ref, fs_safe
 from app.services.pipeline import render_document
 from app.services.report_assembler import ReportModel
+from app.services.text_only import TextOnlyReport, render_text_only
 from app.settings import settings
-from app.storage import date_prefix, get_storage
+from app.storage import date_prefix, get_storage, html_key_for
 
 router = APIRouter()
 
@@ -116,7 +117,11 @@ def rerender(doc_id: uuid.UUID) -> dict[str, Any]:
     """Re-render from the stored report_json with the current template — no LLM or provider calls."""
     with session_scope() as db:
         d = _get(db, doc_id)
-        report = ReportModel.model_validate(d.report_json)
+        report: ReportModel | TextOnlyReport
+        if (d.report_json or {}).get("kind") == "text_only":
+            report = TextOnlyReport.model_validate(d.report_json)
+        else:
+            report = ReportModel.model_validate(d.report_json)
         route_ref = bulk_route_ref(db, d.journey_id)
         base = {k: getattr(d, k) for k in ("journey_id", "generation_job_id", "document_code", "route_name", "region",
                                            "risk_level", "decision", "journey_score", "search_text", "narrative_json",
@@ -124,7 +129,7 @@ def rerender(doc_id: uuid.UUID) -> dict[str, Any]:
                                            "scoring_version", "rules_version", "model", "narrative_source",
                                            "providers")}
     report.meta.versions["template_version"] = settings().template_version
-    html, pdf = render_document(report)
+    html, pdf = render_text_only(report) if isinstance(report, TextOnlyReport) else render_document(report)
     new_id = uuid.uuid4()
     now = datetime.now(timezone.utc)
     st = get_storage()
@@ -132,7 +137,7 @@ def rerender(doc_id: uuid.UUID) -> dict[str, Any]:
     # the bulk naming exists for.
     stem = f"{fs_safe(route_ref)}_{base['document_code']}" if route_ref else base["document_code"]
     prefix = f"documents/{date_prefix(now)}/{stem}_{new_id.hex[:8]}"
-    html_key = st.put_bytes(prefix + ".html", html.encode(), "text/html; charset=utf-8")
+    html_key = st.put_bytes(html_key_for(prefix), html.encode(), "text/html; charset=utf-8")
     pdf_key = st.put_bytes(prefix + ".pdf", pdf.pdf, "application/pdf")
     with session_scope() as db:
         nd = JmpDocument(id=new_id, **base, report_json=report.model_dump(mode="json"),

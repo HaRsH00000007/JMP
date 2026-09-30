@@ -49,10 +49,12 @@ from app.llm.service import AttemptRecord, generate_narrative
 from app.observability.logging import get_logger
 from app.providers.registry import get_providers
 from app.schemas.journeys import JourneyRequest
-from app.services import hazard_library
+from app.services import hazard_library, text_only
 from app.services.pipeline import JourneyOptions, build_report, compute_facts, render_document
+from app.services.route_service import TooFewLocatedStops
+from app.services.text_only import build_text_only, render_text_only
 from app.settings import settings
-from app.storage import date_prefix, get_storage
+from app.storage import date_prefix, get_storage, html_key_for
 from app.versions import current_versions
 
 log = get_logger("jmp.jobs")
@@ -210,7 +212,7 @@ def _options(j: Journey) -> JourneyOptions:
     return JourneyOptions(vehicle_type=j.vehicle_type or "4W", vehicle_type_specified=bool(j.input.get("vehicle_type")),
                           travel_date=j.travel_date, depart_time=j.depart_time, manager_name=j.manager_name,
                           emergency_contact=j.emergency_contact, nearest_hospital=j.nearest_hospital,
-                          nearest_police=j.nearest_police)
+                          nearest_police=j.nearest_police, city_hint=(j.input or {}).get("city"))
 
 
 def fs_safe(text: str) -> str:
@@ -223,10 +225,10 @@ def bulk_route_ref(db: Session, journey_id: uuid.UUID) -> str | None:
     return db.scalar(select(BulkJobItem.route_ref).where(BulkJobItem.id == item_id)) if item_id else None
 
 
-def _assign_code(db: Session, journey: Journey, jf: JourneyFacts) -> str:
+def _assign_code(db: Session, journey: Journey, state: str | None) -> str:
     if journey.journey_code:
         return journey.journey_code
-    info = rules_config.state_info(jf.route.states[0] if jf.route.states else None)
+    info = rules_config.state_info(state)
     code = str(info.get("code", "IN"))
     q = select(JourneyCodeSequence).where(JourneyCodeSequence.state_code == code)
     if not settings().is_sqlite:
@@ -253,8 +255,17 @@ def stage_analyse(job_id: uuid.UUID, attempt: int = 1) -> str | None:
         opts = _options(journey)
         library = hazard_library.load_active_library(db)
     providers = get_providers()
+    too_few: TooFewLocatedStops | None = None
     with session_scope() as db:  # provider cache writes in their own transaction
-        jf = compute_facts(inputs, opts, providers, library, db)
+        try:
+            jf = compute_facts(inputs, opts, providers, library, db)
+        except TooFewLocatedStops as exc:
+            if not settings().text_only_fallback:
+                raise
+            too_few = exc  # caught inside the scope so the geocode cache writes are kept
+    if too_few is not None:
+        complete_text_only(job_id, inputs, opts, library, too_few, geocoder=providers.geocoder.name)
+        return None
     with session_scope() as db:
         job = db.get(GenerationJob, job_id)
         journey = db.get(Journey, job.journey_id)  # type: ignore[union-attr]
@@ -270,7 +281,7 @@ def stage_analyse(job_id: uuid.UUID, attempt: int = 1) -> str | None:
             st.geocoded_name, st.lat, st.lng = w.name, w.lat, w.lng
             st.admin_area = {"state": w.state, "district": w.district, "locality": w.locality}
             st.place_types, st.geocode_confidence, st.provider = w.place_types, w.geocode_confidence, w.geocode_provider
-        _assign_code(db, journey, jf)
+        _assign_code(db, journey, jf.route.states[0] if jf.route.states else None)
         db.execute(delete(RouteAnalysis).where(RouteAnalysis.journey_id == journey.id))
         r = jf.route
         db.add(RouteAnalysis(
@@ -363,6 +374,10 @@ def stage_narrate(job_id: uuid.UUID, attempt: int = 1) -> str | None:
         jf = JourneyFacts.model_validate(job.report_facts)
         library = load_library_for(db, jf.hazard_library_version)
         journey_id, bulk_job_id = job.journey_id, _bulk_job_id_for(db, job)
+        code = db.get(Journey, job.journey_id).journey_code or "DAN-JMP-XX-000"  # type: ignore[union-attr]
+
+    if settings().llm_provider == "anthropic" and settings().llm_preflight_render:
+        preflight_render(jf, library, code)
 
     def sink(rec: AttemptRecord) -> None:
         record_usage(job_id, journey_id, bulk_job_id, rec)
@@ -370,6 +385,21 @@ def stage_narrate(job_id: uuid.UUID, attempt: int = 1) -> str | None:
     narrative, source, model = generate_narrative(jf, library, on_attempt=sink)
     store_narrative(job_id, narrative, source, model)
     return "render"
+
+
+def preflight_render(jf: JourneyFacts, library: hazard_library.HazardLibrary, code: str) -> None:
+    """Render the document once with the free template narrative before paying for Claude's.
+
+    A layout that cannot fit its fixed A4 pages (long stop lists, many verification rows) fails here, as
+    RENDER_OVERFLOW, instead of after a paid narrative. Claude's text is word-limited like the template's, and
+    pages scale up to 10% to fit, so a journey that passes here renders with the real narrative too.
+    """
+    from app.llm.mock_provider import MockNarrativeProvider
+
+    narrative, source, model = generate_narrative(jf, library, provider=MockNarrativeProvider())
+    report = build_report(jf, narrative, journey_code=code, versions=current_versions(jf.hazard_library_version),
+                          narrative_source=source, model=model, pointer_count=settings().hazard_pointer_count)
+    render_document(report)  # raises RenderError(RENDER_OVERFLOW) — before any paid call
 
 
 def store_narrative(job_id: uuid.UUID, narrative: NarrativeV1, source: str, model: str) -> None:
@@ -414,7 +444,7 @@ def stage_render(job_id: uuid.UUID, attempt: int = 1) -> str | None:
     storage = get_storage()
     stem = f"{fs_safe(route_ref)}_{code}" if route_ref else code
     base = f"documents/{date_prefix(now)}/{stem}_{doc_id.hex[:8]}"
-    html_key = storage.put_bytes(base + ".html", html.encode("utf-8"), "text/html; charset=utf-8")
+    html_key = storage.put_bytes(html_key_for(base), html.encode("utf-8"), "text/html; charset=utf-8")
     pdf_key = storage.put_bytes(base + ".pdf", pdf.pdf, "application/pdf")
     total_ms = int((time.monotonic() - t0) * 1000)
     r = report.route
@@ -448,6 +478,71 @@ def stage_render(job_id: uuid.UUID, attempt: int = 1) -> str | None:
 
         bulk.item_finished(item_id, ok=True, document_id=doc_id)
     return None
+
+
+def complete_text_only(job_id: uuid.UUID, inputs: list[str], opts: JourneyOptions,
+                       library: hazard_library.HazardLibrary, exc: TooFewLocatedStops, *, geocoder: str) -> None:
+    """Finish a journey that has no measurable route with a text-only plan (TEXT_ONLY_FALLBACK).
+
+    Skips narrate and render: there are no facts for Claude to write about, and the plan is rendered here.
+    """
+    versions = current_versions(library.version)
+    by_text = dict(exc.located)
+    with session_scope() as db:
+        job = db.get(GenerationJob, job_id)
+        journey = db.get(Journey, job.journey_id)  # type: ignore[union-attr]
+        assert job is not None and journey is not None
+        for st in journey.stops:
+            g = by_text.get(st.raw_text)
+            if g is not None:
+                st.geocoded_name, st.lat, st.lng = g.name, g.lat, g.lng
+                st.admin_area = {"state": g.state, "district": g.district, "locality": g.locality}
+                st.place_types, st.geocode_confidence, st.provider = g.place_types, g.confidence, g.provider
+        state = next((g.state for _, g in exc.located if g.state), None)
+        code = _assign_code(db, journey, state)
+        journey_id, item_id = journey.id, job.bulk_job_item_id
+        route_ref = db.get(BulkJobItem, item_id).route_ref if item_id else None
+    report = build_text_only(inputs, opts, library, journey_code=code, versions=versions, located=exc.located,
+                             unverified=exc.unverified, collapsed=exc.collapsed, reason=exc.message,
+                             geocoder=geocoder)
+    t0 = time.monotonic()
+    html, pdf = render_text_only(report)
+    doc_id = uuid.uuid4()
+    storage = get_storage()
+    stem = f"{fs_safe(route_ref)}_{code}" if route_ref else code
+    base = f"documents/{date_prefix(utcnow())}/{stem}_{doc_id.hex[:8]}"
+    html_key = storage.put_bytes(html_key_for(base), html.encode("utf-8"), "text/html; charset=utf-8")
+    pdf_key = storage.put_bytes(base + ".pdf", pdf.pdf, "application/pdf")
+    total_ms = int((time.monotonic() - t0) * 1000)
+    with session_scope() as db:
+        db.add(JmpDocument(
+            id=doc_id, journey_id=journey_id, generation_job_id=job_id, document_code=code, status="completed",
+            route_name=report.route_name[:200], region=None, risk_level=text_only.RISK_LEVEL,
+            decision=text_only.DECISION, journey_score=None,
+            search_text=" ".join([code, report.route_name, "text-only", *inputs]).lower(),
+            report_json=report.model_dump(mode="json"), narrative_json=None,
+            template_version=versions.template_version, hazard_library_version=versions.hazard_library_version,
+            prompt_version=versions.prompt_version, schema_version=versions.schema_version,
+            scoring_version=versions.scoring_version, rules_version=versions.rules_version,
+            app_version=versions.app_version, model="none", narrative_source="none", providers=report.meta.providers,
+            html_path=html_key, pdf_path=pdf_key, pdf_sha256=hashlib.sha256(pdf.pdf).hexdigest(),
+            pdf_bytes=len(pdf.pdf), page_count=pdf.page_count, render_ms=total_ms - pdf.render_ms,
+            pdf_ms=pdf.render_ms))
+        job = db.get(GenerationJob, job_id)
+        assert job is not None
+        job.document_id = doc_id
+        job.status = JobStatus.completed
+        job.stage = JobStage.done
+        job.finished_at = utcnow()
+        journey = db.get(Journey, journey_id)
+        if journey is not None:
+            journey.status = JobStatus.completed
+    log.info("job_completed_text_only", job_id=str(job_id), document_id=str(doc_id), code=code,
+             located=len(exc.located), unverified=len(exc.unverified))
+    if item_id is not None:
+        from app.services import bulk
+
+        bulk.item_finished(item_id, ok=True, document_id=doc_id)
 
 
 # ------------------------------------------------------------------------------------- operations

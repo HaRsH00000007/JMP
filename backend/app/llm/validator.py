@@ -39,6 +39,12 @@ _HAZARD_PHRASES = {
 }
 
 
+def facts_text_for_validation(payload: dict[str, Any]) -> str:
+    """The facts as text, without the excluded-terms list (which names hazards precisely because they are NOT
+    on the route, so it must never make those names look supplied)."""
+    return json.dumps({k: v for k, v in payload.items() if k != "excluded_hazard_terms"}, ensure_ascii=False).lower()
+
+
 def _norm_num(s: str) -> str:
     s = s.replace(",", "")
     try:
@@ -96,7 +102,7 @@ def validate_narrative(n: NarrativeV1, payload: dict[str, Any], library: HazardL
         errors.append(f"additional_verification: at most 6 items (got {len(n.additional_verification)})")
 
     allowed = allowed_numbers(payload, library_numbers)
-    facts_text = json.dumps(payload, ensure_ascii=False).lower()
+    facts_text = facts_text_for_validation(payload)
     candidates = {h["code"] for h in payload["candidate_hazards"]}
     for path, text in prose_fields(n):
         if _EMAIL.search(text):

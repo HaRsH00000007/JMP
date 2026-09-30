@@ -280,7 +280,9 @@ def finalize(bulk_id: uuid.UUID | str) -> None:
                           "estimated_cost_usd": float(usage[4]), "estimated_cost_inr": float(usage[5])},
                 "generated_at": utcnow().isoformat(),
             }
-            pdf_keys = [(_pdf_name(ref, d.document_code), d.pdf_path) for ref, d in item_docs if d.pdf_path]
+            # a withdrawn document (deleted_at set, file moved aside) is not part of the delivery
+            pdf_keys = [(_pdf_name(ref, d.document_code), d.pdf_path) for ref, d in item_docs
+                        if d.pdf_path and d.deleted_at is None]
         # ---- build files outside the transaction ----
         csv_buf = io.StringIO()
         w = csv.DictWriter(csv_buf, fieldnames=MANIFEST_COLUMNS)
@@ -304,6 +306,9 @@ def finalize(bulk_id: uuid.UUID | str) -> None:
             zpath = Path(tmp) / f"JMP_Batch_{bulk_id}.zip"
             with zipfile.ZipFile(zpath, "w", compression=zipfile.ZIP_STORED) as z:
                 for name, key in pdf_keys:
+                    if not storage.exists(key):  # never let one missing file sink the whole batch's ZIP
+                        log.warning("bulk_zip_missing_pdf", bulk_id=str(bulk_id), key=key)
+                        continue
                     z.writestr(f"pdfs/{name}", storage.get_bytes(key))
                 z.writestr("manifest.csv", csv_bytes)
                 z.writestr("manifest.xlsx", xbuf.getvalue())

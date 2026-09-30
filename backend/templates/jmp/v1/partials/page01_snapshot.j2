@@ -18,13 +18,17 @@
 
 <div class="p1-top">
   <div class="card map-card">
-    <div class="mt">ROUTE MAP — {{ r.route.waypoint_count }}-POINT {{ 'CIRCULAR LOOP' if r.route.is_round_trip else 'ROUTE' }}</div>
+    <div class="mt">ROUTE MAP — {{ r.route.itinerary | length if r.route.itinerary else r.route.waypoint_count }}-STOP {{ 'CIRCULAR LOOP' if r.route.is_round_trip else 'ROUTE' }}</div>
     {{ svg.map_p1 }}
   </div>
   <div class="kpis">
     <div class="kpi"><div class="k">{{ icon('route', 10) }} Distance</div><div class="v">{{ r.route.distance_range_km[0] }}–{{ r.route.distance_range_km[1] }} km</div><div class="s">Assessment basis</div></div>
     <div class="kpi"><div class="k">{{ icon('clock', 10) }} Journey time</div><div class="v">{{ r.route.duration_range_min[0] | hm }}–<br>{{ r.route.duration_range_min[1] | hm }}</div><div class="s">Driving time · assessment basis</div></div>
+    {% if r.route.itinerary and r.route.itinerary | length != r.route.waypoint_count %}
+    <div class="kpi"><div class="k">{{ icon('pin', 10) }} Number of stops</div><div class="v">{{ r.route.itinerary | length }}</div><div class="s">as submitted · {{ r.route.waypoint_count }} on the measured route</div></div>
+    {% else %}
     <div class="kpi"><div class="k">{{ icon('pin', 10) }} Number of stops</div><div class="v">{{ r.route.waypoint_count }}</div><div class="s">{{ r.route.intermediate_stops }} intermediate stop{{ 's' if r.route.intermediate_stops != 1 }}{{ ' + return' if r.route.is_round_trip }}</div></div>
+    {% endif %}
     <div class="kpi"><div class="k">{{ icon('layers', 10) }} Complexity</div><div class="v">{{ r.route.complexity }}</div><div class="s">{{ r.route.road_type_count }} road type{{ 's' if r.route.road_type_count != 1 }}</div></div>
     <div class="score-card">
       <div class="k">{{ icon('gauge', 10, '#CEDFF4') }} JOURNEY SCORE</div>

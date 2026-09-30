@@ -1,7 +1,7 @@
 """Bulk CSV parsing and validation (api-design.md §3). Pure functions — no I/O beyond the bytes given.
 
 Contract: route_id,start_location,stop_1..stop_N,end_location[,vehicle_type,travel_date,depart_time,
-manager_name,emergency_contact,nearest_hospital,nearest_police]. Header matching is case-insensitive with
+manager_name,emergency_contact,nearest_hospital,nearest_police,city]. Header matching is case-insensitive with
 aliases ("Starting Location", "Stop 1", "End Location"). A gap in stop columns is a row error.
 """
 
@@ -28,6 +28,7 @@ _ALIASES = {
     "emergency_contact": {"emergency_contact", "emergency contact", "emergency contact details"},
     "nearest_hospital": {"nearest_hospital", "nearest hospital"},
     "nearest_police": {"nearest_police", "nearest police", "nearest police station"},
+    "city": {"city", "city name", "city_name"},
 }
 _STOP_RE = re.compile(r"^(?:stop|waypoint|via)[\s_#-]*(\d+)$")
 
@@ -135,7 +136,7 @@ def parse_csv(data: bytes) -> ParsedCsv:
                 "end_location": raw.get(mapping["end_location"], ""),
             }
             for opt in ("vehicle_type", "travel_date", "depart_time", "manager_name", "emergency_contact",
-                        "nearest_hospital", "nearest_police"):
+                        "nearest_hospital", "nearest_police", "city"):
                 if opt in mapping and raw.get(mapping[opt]):
                     body[opt] = raw[mapping[opt]]
             try:

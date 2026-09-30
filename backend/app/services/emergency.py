@@ -15,9 +15,9 @@ from app.domain.facts import DirectoryRow, EmergencyInfo, RouteFacts
 from app.providers.registry import Providers
 
 
-def build_emergency(facts: RouteFacts, providers: Providers, *, nearest_hospital: str | None,
-                    nearest_police: str | None, emergency_contact: str | None, manager_name: str | None,
-                    hospital_network_url: str | None) -> EmergencyInfo:
+def supplied_rows(*, nearest_hospital: str | None, nearest_police: str | None, emergency_contact: str | None,
+                  manager_name: str | None) -> list[DirectoryRow]:
+    """The verified pan-India numbers plus whatever was supplied with the journey — no route needed."""
     cfg = rules_config.emergency_static()
     rows: list[DirectoryRow] = [DirectoryRow(**r) for r in cfg["verified_numbers"]]
     if emergency_contact:
@@ -30,9 +30,18 @@ def build_emergency(facts: RouteFacts, providers: Providers, *, nearest_hospital
     if nearest_police:
         rows.append(DirectoryRow(type="Police", name=nearest_police, location="Supplied with journey",
                                  status="PROVIDED"))
+    return rows
+
+
+def build_emergency(facts: RouteFacts, providers: Providers, *, nearest_hospital: str | None,
+                    nearest_police: str | None, emergency_contact: str | None, manager_name: str | None,
+                    hospital_network_url: str | None) -> EmergencyInfo:
+    cfg = rules_config.emergency_static()
+    rows = supplied_rows(nearest_hospital=nearest_hospital, nearest_police=nearest_police,
+                         emergency_contact=emergency_contact, manager_name=manager_name)
     for w in facts.waypoints:
         if w.is_institutional and "hospital" in [t.lower() for t in w.place_types]:
-            rows.append(DirectoryRow(type="Hospital", name=w.name, location=f"Route waypoint {w.seq}",
+            rows.append(DirectoryRow(type="Hospital", name=w.input_text, location=f"Route waypoint {w.seq}",
                                      status="PROVIDED"))
 
     if providers.places is not None:

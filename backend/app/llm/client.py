@@ -20,9 +20,13 @@ from app.errors import ErrorCode, LlmError
 from app.llm.pricing import TokenUsage
 from app.llm.schemas import api_json_schema
 from app.llm.static_prefix import StaticPrefix
+from app.observability.logging import get_logger
 from app.settings import settings
 
+log = get_logger("jmp.llm.client")
+
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
+FALLBACK_MODELS = ("claude-opus-5", "claude-fable-5", "claude-mythos-5")
 
 
 @dataclass
@@ -41,7 +45,8 @@ class NarrativeProvider(Protocol):
     name: str
     model: str
 
-    def call(self, prefix: StaticPrefix, messages: list[dict[str, Any]], *, max_tokens: int) -> LlmCallResult: ...
+    def call(self, prefix: StaticPrefix, messages: list[dict[str, Any]], *, max_tokens: int,
+             model: str | None = None, effort: str | None = None) -> LlmCallResult: ...
 
 
 def usage_from_response(usage: Any) -> TokenUsage:
@@ -67,20 +72,21 @@ def first_text(content: Any) -> str:
 
 
 def request_params(prefix: StaticPrefix, messages: list[dict[str, Any]], *, model: str, max_tokens: int,
-                   for_batch: bool = False) -> dict[str, Any]:
+                   for_batch: bool = False, effort: str | None = None) -> dict[str, Any]:
     s = settings()
     params: dict[str, Any] = {
         "model": model,
         "max_tokens": max_tokens,
         "system": prefix.system_param("1h" if for_batch else s.anthropic_cache_ttl),
         "messages": messages,
-        "output_config": {"effort": s.anthropic_effort, "format": {"type": "json_schema", "schema": api_json_schema()}},
+        "output_config": {"effort": effort or s.anthropic_effort, "format": {"type": "json_schema", "schema": api_json_schema()}},
     }
     return params
 
 
 class AnthropicNarrativeProvider:
     name = "anthropic"
+    _grammar_too_large = False  # set once the API refuses to compile the narrative schema (see call())
 
     def __init__(self, client: Any | None = None, model: str | None = None) -> None:
         s = settings()
@@ -94,15 +100,33 @@ class AnthropicNarrativeProvider:
                                          timeout=s.anthropic_timeout_s)
         self.client = client
 
-    def call(self, prefix: StaticPrefix, messages: list[dict[str, Any]], *, max_tokens: int) -> LlmCallResult:
+    def call(self, prefix: StaticPrefix, messages: list[dict[str, Any]], *, max_tokens: int,
+             model: str | None = None, effort: str | None = None) -> LlmCallResult:
         s = settings()
-        params = request_params(prefix, messages, model=self.model, max_tokens=max_tokens)
-        if s.anthropic_fallbacks_enabled:
+        model = model or self.model
+        effort = effort or s.anthropic_effort
+        params = request_params(prefix, messages, model=model, max_tokens=max_tokens, effort=effort)
+        # server-side refusal fallbacks exist for the Opus 5 / Fable 5.x family only
+        if s.anthropic_fallbacks_enabled and model.startswith(FALLBACK_MODELS):
             params["extra_headers"] = {"anthropic-beta": FALLBACK_BETA}
             params["extra_body"] = {"fallbacks": "default"}
+        if AnthropicNarrativeProvider._grammar_too_large:
+            params["output_config"] = {"effort": effort}
         t0 = time.monotonic()
         try:
-            resp = self.client.messages.create(**params)
+            try:
+                resp = self.client.messages.create(**params)
+            except anthropic.BadRequestError as exc:
+                # The narrative schema is within the documented structured-output rules, but its compiled
+                # grammar exceeds the API's size limit. The schema is also in the system prompt and every
+                # reply is validated against it (with a correcting retry), so send the same request
+                # without the format constraint — and skip it for the rest of this process.
+                if "compiled grammar is too large" not in (exc.message or "") or "format" not in params["output_config"]:
+                    raise
+                log.warning("llm_structured_output_disabled", reason="compiled grammar too large")
+                AnthropicNarrativeProvider._grammar_too_large = True
+                params["output_config"] = {"effort": effort}
+                resp = self.client.messages.create(**params)
         except anthropic.RateLimitError as exc:
             raise LlmError("Anthropic rate limit", code=ErrorCode.LLM_UNAVAILABLE) from exc
         except anthropic.APITimeoutError as exc:
@@ -122,4 +146,4 @@ class AnthropicNarrativeProvider:
         stop = getattr(resp, "stop_reason", None)
         return LlmCallResult(text=first_text(resp.content), usage=usage_from_response(resp.usage), stop_reason=stop,
                              request_id=getattr(resp, "_request_id", None) or getattr(resp, "id", None),
-                             duration_ms=dur, model=getattr(resp, "model", self.model) or self.model)
+                             duration_ms=dur, model=getattr(resp, "model", model) or model)

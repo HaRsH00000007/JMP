@@ -50,6 +50,26 @@ OVERFLOW_JS = """
 """
 
 
+# A page whose prose runs a few lines long (real narrative length varies) is scaled down in 1% steps, to at
+# most 90%, before the overflow check. Nothing is clipped: a page that still does not fit fails as before.
+FIT_JS = """
+() => {
+  const scaled = [];
+  document.querySelectorAll('section.page').forEach((pg) => {
+    if (pg.scrollHeight <= pg.clientHeight + 1) return;
+    const kids = [...pg.children].filter((k) => !k.classList.contains('footer'));
+    let z = 1.0;
+    while (pg.scrollHeight > pg.clientHeight + 1 && z > 0.905) {
+      z = Math.round((z - 0.01) * 100) / 100;
+      kids.forEach((k) => { k.style.zoom = z; });
+    }
+    scaled.push({page: pg.getAttribute('data-page'), zoom: z});
+  });
+  return scaled;
+}
+"""
+
+
 @dataclass
 class PdfResult:
     pdf: bytes
@@ -120,6 +140,9 @@ def _render_pdf(html: str, *, metadata: dict[str, str], expected_pages: int = 8)
                 page.goto(path.as_uri(), wait_until="load", timeout=timeout)
                 page.emulate_media(media="print")
                 page.evaluate("document.fonts.ready")
+                scaled = page.evaluate(FIT_JS)
+                if scaled:
+                    log.info("pdf_pages_scaled_to_fit", pages=scaled)
                 problems = page.evaluate(OVERFLOW_JS)
                 if problems:
                     raise RenderError("Report content overflows the fixed A4 layout", code=ErrorCode.RENDER_OVERFLOW,

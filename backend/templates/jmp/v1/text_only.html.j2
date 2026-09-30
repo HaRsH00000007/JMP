@@ -1,0 +1,102 @@
+{# Text-only plan: fewer than two stops could be located, so nothing on the route is measured. #}
+{% import "partials/components.j2" as c %}
+<!DOCTYPE html>
+<html lang="en-IN">
+<head>
+<meta charset="utf-8">
+<title>{{ r.meta.company_title }} — Journey Management Plan {{ r.meta.journey_code }} (text-only)</title>
+<style>
+{{ fonts_css }}
+{{ styles_css }}
+.not-measured { border: 2px solid #B42318; background: #FEF3F2; padding: 8px 10px; margin: 8px 0 4px; }
+.not-measured .k { color: #B42318; font-weight: 700; font-size: 11pt; letter-spacing: .02em; }
+.not-measured p { margin: 4px 0 0; }
+</style>
+</head>
+<body data-template-version="{{ r.meta.versions.template_version }}" data-journey="{{ r.meta.journey_code }}" data-kind="text_only">
+
+<section class="page p1" data-page="1">
+<div class="p1-head">
+  <div>
+    <div class="brand">{{ r.meta.company }}</div>
+    <div class="title">JOURNEY MANAGEMENT PLAN</div>
+    <div class="sub">Text-only plan — route not measured</div>
+    <div class="route">{{ r.route_name }}</div>
+  </div>
+  <div class="meta">
+    Journey ID: <b>{{ r.meta.journey_code }}</b><br>
+    Version: <b>{{ r.meta.version_label }}</b><br>
+    Status: <b>NOT ASSESSED</b>
+  </div>
+</div>
+
+<div class="not-measured">
+  <div class="k">ROUTE NOT MEASURED — THIS IS NOT A ROUTE RISK ASSESSMENT</div>
+  <p>Fewer than two of the submitted stops could be located on the map, so no route could be measured. This plan
+  contains <b>no</b> distance, driving time, road types, segment risks, hazard positions, journey score or
+  journey decision. The stops below are printed exactly as submitted. Confirm every stop and every item in the
+  checklist before travel.</p>
+</div>
+
+{{ c.h2('JOURNEY DETAILS (AS SUBMITTED)') }}
+{{ c.kv_table(r.travel.keys() | list, r.travel.values() | list) }}
+
+{{ c.h2('STOPS — EXACTLY AS SUBMITTED') }}
+<table class="t compact">
+  <tr><th style="width:4%">#</th><th style="width:10%">Position</th><th style="width:40%">Address exactly as submitted</th><th>Map lookup</th></tr>
+  {% for s in r.stops %}
+  <tr><td>{{ s.seq }}</td><td>{{ s.kind | upper }}</td><td>{{ s.input_text }}</td>
+      <td class="{{ 'status-PROVIDED' if s.located_as else 'status-REQUIRES_VERIFICATION' }}">{% if s.located_as %}{{ s.located_as }} — {% endif %}{{ s.note }}</td></tr>
+  {% endfor %}
+</table>
+
+{{ c.h2('BEFORE-TRAVEL VERIFICATION CHECKLIST') }}
+<table class="t compact">
+  <tr><th style="width:4%">#</th><th style="width:52%">Confirm before travel</th><th>Why</th><th style="width:8%">Done</th></tr>
+  {% for v in r.verification %}
+  <tr><td>{{ loop.index }}</td><td>{{ v.item }}</td><td>{{ v.reason }}</td><td>☐</td></tr>
+  {% endfor %}
+</table>
+<div class="caption">{{ r.reason }}</div>
+{{ c.footer(r, 1) }}
+</section>
+
+<section class="page" data-page="2">
+{{ c.section_bar('HAZARD CHECKLIST — APPLICABILITY TO BE CONFIRMED', 2) }}
+<div class="caption">Without a measured route no hazard can be confirmed or ruled out, so the full hazard library is
+listed. Bands and controls are the library values for a {{ r.travel['Vehicle'] }}; tick each hazard that applies to the route actually driven.</div>
+<table class="t compact">
+  <tr><th style="width:7%">Code</th><th style="width:30%">Hazard</th><th style="width:9%">Library band</th><th>Required control</th><th style="width:7%">Applies</th></tr>
+  {% for h in r.hazards %}
+  <tr><td>{{ h.code }}</td><td>{{ h.name }}</td>{{ c.band_cell(h.band) }}<td>{{ h.control }}</td><td>☐</td></tr>
+  {% endfor %}
+</table>
+{{ c.footer(r, 2) }}
+</section>
+
+<section class="page" data-page="3">
+{{ c.section_bar('EMERGENCY PREPAREDNESS', 3) }}
+{% for p in r.emergency_protocols %}
+<div class="proto {{ p.tone }}"><div class="k">{{ icon({'accident': 'alert', 'breakdown': 'wrench', 'medical': 'hospital', 'weather': 'weather'}.get(p.key, 'alert'), 11, '#0A2545') }} {{ p.title }}</div><div class="s">{{ p.steps | join(' → ') }}</div></div>
+{% endfor %}
+
+{{ c.h2('EMERGENCY DIRECTORY') }}
+<table class="t compact">
+  <tr><th style="width:17%">Type</th><th style="width:36%">Name / Details</th><th>Location</th><th style="width:21%">Status</th></tr>
+  {% for d in r.emergency_directory %}
+  <tr><td>{{ d.type }}</td><td>{{ d.name }}</td><td>{{ d.location }}</td>
+      <td class="status-{{ d.status }} status-cell-{{ d.status }}">{{ d.status | replace('_', ' ') }}</td></tr>
+  {% endfor %}
+</table>
+<div class="caption">{{ r.emergency_note }} No hospitals or police stations were searched for: there is no located route to search along.{% if r.hospital_network_url %} Insurer hospital network (from the hazard library source): {{ r.hospital_network_url }}{% endif %}</div>
+
+<div class="final"><div class="k">JOURNEY DECISION: NOT ASSESSED</div><p>This plan cannot support a go / no-go decision because
+the route was not measured. Correct the stop addresses and regenerate the plan, or have the journey assessed manually
+by EHS before travel.</p></div>
+
+<div class="disclaimer">{{ r.meta.disclaimer }}</div>
+<div class="versions">Template v{{ r.meta.versions.template_version }} (text-only) · Hazard library v{{ r.meta.versions.hazard_library_version }} · Rules v{{ r.meta.versions.rules_version }} · App {{ r.meta.versions.app_version }} · Geocoder: {{ r.meta.providers.geocode }} · Narrative: none · Generated {{ r.meta.generated_at[:16] | replace('T', ' ') }} UTC</div>
+{{ c.footer(r, 3) }}
+</section>
+</body>
+</html>
