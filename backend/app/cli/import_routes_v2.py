@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import openpyxl
@@ -30,11 +31,36 @@ from app.cli.import_forms import Journey, _clean, _is_placeholder, _with_city, w
 
 # Location columns, 1-based, in the order they form the journey. Identical in both sheets; the last is
 # "End Location" in Sheet1 and "Stop 6" in Sheet2, which is the same thing for our purposes.
-LOCATION_COLUMNS = (5, 6, 7, 9, 11, 13, 15)
+@dataclass(frozen=True)
+class Layout:
+    """Where the columns sit in one workbook shape. Both layouts are one journey per row."""
+
+    locations: tuple[int, ...]
+    employee: int
+    email: int
+    manager: int
+    city: int | None          # None = the start location doubles as the city context
+    hazards: tuple[int, ...]  # the driver's own free-text hazard answers, for the review report only
+
+
+LAYOUTS = {
+    # "JMP - Routes Data_V2": Employee | phone | email | manager | start | stop1 | stop2 | [hazard] | stop3 …
+    "v2": Layout(locations=(5, 6, 7, 9, 11, 13, 15), employee=1, email=3, manager=4, city=None,
+                 hazards=(8, 10, 12, 14)),
+    # "JMP - Routes Data_V4": manager | phone | manager email | employee | city | start | stop1..4 | end
+    "v4": Layout(locations=(6, 7, 8, 9, 10, 11), employee=4, email=3, manager=1, city=5, hazards=()),
+    # "JMP - Routes Data_V5": manager | reportee | city | start | stop1..3 | last stop | criteria
+    "v5": Layout(locations=(4, 5, 6, 7, 8), employee=2, email=0, manager=1, city=3, hazards=(9,)),
+    # "JMP - Routes Data_V6": manager | manager email | reportee | city | start | stop1..3 | last | criteria
+    "v6": Layout(locations=(5, 6, 7, 8, 9), employee=3, email=2, manager=1, city=4, hazards=(10,)),
+}
+
+LOCATION_COLUMNS = LAYOUTS["v2"].locations   # kept for callers that predate --layout
 NAME_COL, EMAIL_COL, MANAGER_COL = 1, 3, 4
 
 
-def extract(path: Path, sheet: str, limit: int | None = None) -> list[Journey]:
+def extract(path: Path, sheet: str, limit: int | None = None, layout: str = "v2") -> list[Journey]:
+    lay = LAYOUTS[layout]
     wb = openpyxl.load_workbook(path, data_only=True)
     if sheet not in wb.sheetnames:
         raise SystemExit(f"No sheet {sheet!r}; the workbook has {wb.sheetnames}")
@@ -46,27 +72,29 @@ def extract(path: Path, sheet: str, limit: int | None = None) -> list[Journey]:
     row = 2
     seq = 0
     while row <= ws.max_row:
-        cells = [_clean(ws.cell(row, c).value) for c in LOCATION_COLUMNS]
-        if not any(cells) and not _clean(ws.cell(row, NAME_COL).value):
+        cells = [_clean(ws.cell(row, c).value) for c in lay.locations]
+        if not any(cells) and not _clean(ws.cell(row, lay.employee).value):
             row += 1
             continue
         seq += 1
         if limit is not None and seq > limit:
             break
         j = Journey(route_id=f"{prefix}R{seq:03d}", source_row=row, block=1,
-                    employee=_clean(ws.cell(row, NAME_COL).value),
-                    email=_clean(ws.cell(row, EMAIL_COL).value),
-                    city=cells[0],  # the start location doubles as the context for the other stops
-                    criteria=_hazards(ws, row))
+                    employee=_clean(ws.cell(row, lay.employee).value),
+                    email=_clean(ws.cell(row, lay.email).value) if lay.email else "",
+                    # Context for resolving the other stops: the named city where there is one, otherwise
+                    # the start location, which is the only locality the row gives.
+                    city=_clean(ws.cell(row, lay.city).value) if lay.city else cells[0],
+                    criteria=_hazards(ws, row, lay.hazards))
         # V2 names the manager explicitly; the report prints that, not the driver.
-        j.manager = _clean(ws.cell(row, MANAGER_COL).value)
+        j.manager = _clean(ws.cell(row, lay.manager).value)
 
         chain: list[str] = []
         for pos, raw in enumerate(cells):
             if not raw:
                 continue
             if _is_placeholder(raw):
-                j.notes.append(f"dropped non-location in column {LOCATION_COLUMNS[pos]}: {raw!r}")
+                j.notes.append(f"dropped non-location in column {lay.locations[pos]}: {raw!r}")
                 continue
             chain.append(raw)
         collapsed: list[str] = []
@@ -148,7 +176,7 @@ def write_csv_v2(journeys: list[Journey], out: Path, vehicle: str, travel_date: 
     """Same columns as the Forms importer, except manager_name carries the manager rather than the driver."""
     max_stops = max((len(j.locations) - 2 for j in journeys if j.ok), default=0)
     cols = ["route_id", "start_location", *[f"stop_{i}" for i in range(1, max_stops + 1)], "end_location",
-            "vehicle_type", "travel_date", "depart_time", "manager_name"]
+            "vehicle_type", "travel_date", "depart_time", "manager_name", "city"]
     n = 0
     with open(out, "w", newline="", encoding="utf-8") as fh:
         w = _csv.DictWriter(fh, fieldnames=cols)
@@ -158,7 +186,7 @@ def write_csv_v2(journeys: list[Journey], out: Path, vehicle: str, travel_date: 
                 continue
             row = {"route_id": j.route_id, "start_location": j.locations[0], "end_location": j.locations[-1],
                    "vehicle_type": vehicle, "travel_date": travel_date, "depart_time": depart_time,
-                   "manager_name": getattr(j, "manager", "") or j.employee}
+                   "manager_name": getattr(j, "manager", "") or j.employee, "city": j.city}
             for i, stop in enumerate(j.locations[1:-1], start=1):
                 row[f"stop_{i}"] = stop
             w.writerow(row)
@@ -166,7 +194,7 @@ def write_csv_v2(journeys: list[Journey], out: Path, vehicle: str, travel_date: 
     return n
 
 
-def _hazards(ws, row: int) -> str:
+def _hazards(ws, row: int, columns: tuple[int, ...]) -> str:
     """The driver's own free-text hazard declarations, kept for the review report only.
 
     They are never sent to the generator: hazards come from Danone's 25-hazard library, applied to the
@@ -174,7 +202,7 @@ def _hazards(ws, row: int) -> str:
     assessment.
     """
     seen: list[str] = []
-    for col in (8, 10, 12, 14):
+    for col in columns:
         v = _clean(ws.cell(row, col).value)
         if v and v not in seen:
             seen.append(v)
@@ -185,6 +213,8 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("xlsx", type=Path)
     ap.add_argument("--sheet", required=True)
+    ap.add_argument("--layout", default="v2", choices=sorted(LAYOUTS),
+                    help="which workbook shape to read (see LAYOUTS)")
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--report", type=Path)
     ap.add_argument("--limit", type=int, help="only the first N journeys")
@@ -199,13 +229,16 @@ def main(argv: list[str] | None = None) -> int:
                     help="check every location against the configured geocoder before writing")
     a = ap.parse_args(argv)
 
-    journeys = extract(a.xlsx, a.sheet, a.limit)
+    journeys = extract(a.xlsx, a.sheet, a.limit, a.layout)
     if a.resolve:
         resolve_v2(journeys, a.min_confidence)
         if a.keep_unresolved:
             for j in journeys:
-                if j.skipped.startswith("only "):
-                    continue  # cannot be routed at all; leave it skipped
+                # Keeping unresolved ADDRESSES is the point; a row with nothing to write is a different
+                # thing. Clearing the flag on one of those produced an empty journey and crashed the
+                # writer, so the row has to still carry at least two stops to be reinstated.
+                if j.skipped.startswith("only ") or len(j.locations) < 2:
+                    continue
                 j.skipped = ""
     written = write_csv_v2(journeys, a.out, a.vehicle_type, a.travel_date, a.depart_time)
     if a.report:

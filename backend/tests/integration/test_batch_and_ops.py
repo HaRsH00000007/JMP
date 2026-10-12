@@ -256,3 +256,43 @@ def test_mock_narrative_batch_does_not_serialise_behind_row_one(db, monkeypatch)
     finally:
         set_settings(None)
     assert len(inline) == 1 and len(dispatched) == 2
+
+
+def test_document_filename_template():
+    """A delivery can choose how its files read; recipients sort these by eye, not by journey code."""
+    import uuid as _uuid
+
+    from app.services.jobs import document_stem
+
+    d = _uuid.UUID("aa36eb70aa36eb70aa36eb70aa36eb70")
+    assert document_stem("R001", "DAN-JMP-MH-001", "A Patel", "mumbai", d) == "R001_DAN-JMP-MH-001_aa36eb70"
+
+    set_settings(get_settings().model_copy(update={"document_filename_template": "{route_id}- {manager}- {city}"}))
+    try:
+        assert document_stem("R001", "DAN-JMP-MH-001", "A Patel", "mumbai", d) == "R001- A Patel- mumbai"
+        # characters a filesystem objects to are dropped, and an empty field leaves no dangling separator
+        assert document_stem("R002", "X", 'A/B "Name"', "", d) == "R002- AB Name"
+        # a template that resolves to nothing still yields a usable name
+        set_settings(get_settings().model_copy(update={"document_filename_template": "{city}"}))
+        assert document_stem(None, "DAN-JMP-XX-001", "", "", d) == "DAN-JMP-XX-001_aa36eb70"
+    finally:
+        set_settings(None)
+
+
+def test_bulk_document_uses_the_template_end_to_end(db):
+    from app.db.models import JmpDocument
+
+    data = (b"route_id,start_location,end_location,manager_name,city\n"
+            b"R900,Zirakpur,Lalru,Hitendrakumar Patel,mumbai\n")
+    set_settings(get_settings().model_copy(update={"document_filename_template": "{route_id}- {manager}- {city}"}))
+    try:
+        with session_scope() as s:
+            bid = bulk.create_bulk_job(s, parse_csv(data), filename="v4.csv", csv_bytes=data).id
+        bulk.start(bid)
+        with session_scope() as s:
+            item = s.scalars(select(BulkJobItem).where(BulkJobItem.bulk_job_id == bid)).one()
+            assert item.status == "succeeded", item.error_message
+            name = s.get(JmpDocument, item.document_id).pdf_path.rsplit("/", 1)[-1]
+            assert name == "R900- Hitendrakumar Patel- mumbai.pdf", name
+    finally:
+        set_settings(None)

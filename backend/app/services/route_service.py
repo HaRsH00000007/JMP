@@ -35,7 +35,7 @@ from app.domain.facts import (
     UnverifiedStop,
     Waypoint,
 )
-from app.domain.route import ElevationProfile, FeatureSet, GeocodeResult, RouteResult
+from app.domain.route import ElevationProfile, FeatureSet, GeocodeResult, RouteResult, SuppliedPoint
 from app.domain.solar import fmt_hhmm, local_sun_times
 from app.errors import ErrorCode, GeocodeError, RouteError
 from app.observability.logging import get_logger
@@ -257,10 +257,23 @@ def geocode_one(text: str, providers: Providers, session: Session | None = None,
     raise first
 
 
+def _point_at(points: Sequence[SuppliedPoint | None] | None, i: int) -> SuppliedPoint | None:
+    return points[i] if points is not None and i < len(points) else None
+
+
 def geocode_all(texts: Sequence[str], providers: Providers, session: Session | None = None,
-                city_hint: str | None = None) -> list[GeocodeResult]:
-    """Locate every stop, or fail the journey. Nothing is planned on a location we could not verify."""
-    return [geocode_one(t, providers, session, city_hint) for t in texts]
+                city_hint: str | None = None,
+                points: Sequence[SuppliedPoint | None] | None = None) -> list[GeocodeResult]:
+    """Locate every stop, or fail the journey. Nothing is planned on a location we could not verify.
+
+    A stop that arrived with its own coordinates (points[i], from the requester's place picker) is used
+    exactly where it was put: no geocoder is asked about it, so no provider call and no Google charge.
+    """
+    out: list[GeocodeResult] = []
+    for i, t in enumerate(texts):
+        p = _point_at(points, i)
+        out.append(p.as_geocode(t) if p is not None else geocode_one(t, providers, session, city_hint))
+    return out
 
 
 class TooFewLocatedStops(GeocodeError):
@@ -298,7 +311,7 @@ def full_itinerary(texts: Sequence[str]) -> list[ItineraryStop]:
 
 
 def _reject_outliers(texts: Sequence[str], found: list[GeocodeResult | None],
-                     unverified: list[UnverifiedStop], n: int) -> None:
+                     unverified: list[UnverifiedStop], n: int, fixed: frozenset[int] = frozenset()) -> None:
     """Drop a located stop that sits implausibly far from every other stop on the same journey.
 
     Confidence cannot catch this. A short, context-free stop name matches a real place somewhere else in
@@ -310,6 +323,9 @@ def _reject_outliers(texts: Sequence[str], found: list[GeocodeResult | None],
     nearest companion is beyond the threshold is treated as not located: printed verbatim, excluded from
     the measurement, and raised for verification — the same handling as an address that was never found.
     Set GEOCODE_MAX_STOP_SEPARATION_KM to 0 for genuinely long-haul journeys.
+
+    Stops in `fixed` were placed by the requester, not guessed by a geocoder: they still count as the
+    places the others are measured against, but are never themselves rejected.
     """
     limit_km = settings().geocode_max_stop_separation_km
     idx = [i for i, g in enumerate(found) if g is not None]
@@ -331,9 +347,10 @@ def _reject_outliers(texts: Sequence[str], found: list[GeocodeResult | None],
             if not others:
                 continue  # every other stop is this same place; the collapse pass handles that
             nearest[i] = min(others) / 1000.0
-        if not nearest:
+        candidates = {i: km for i, km in nearest.items() if i not in fixed}
+        if not candidates:
             return
-        worst = max(nearest, key=lambda i: nearest[i])
+        worst = max(candidates, key=lambda i: candidates[i])
         if nearest[worst] <= limit_km:
             return
         away = nearest[worst]
@@ -352,7 +369,8 @@ def _reject_outliers(texts: Sequence[str], found: list[GeocodeResult | None],
 
 
 def geocode_best_effort(texts: Sequence[str], providers: Providers, session: Session | None = None,
-                        city_hint: str | None = None, *, area_fallback: bool = False) -> BestEffortGeocode:
+                        city_hint: str | None = None, *, area_fallback: bool = False,
+                        points: Sequence[SuppliedPoint | None] | None = None) -> BestEffortGeocode:
     """Locate what can be located, and report the rest instead of failing the whole journey.
 
     A field visit is usually a chain of private clinics and shop names that no open gazetteer contains, so
@@ -367,18 +385,26 @@ def geocode_best_effort(texts: Sequence[str], providers: Providers, session: Ses
 
     Only a GeocodeError marks a stop as not located. A provider outage propagates, so the stage retries it
     instead of printing a findable stop as "not found".
+
+    Stops with supplied coordinates (points[i]) are taken as placed, without asking a geocoder.
     """
     n = len(texts)
     found: list[GeocodeResult | None] = []
     unverified: list[UnverifiedStop] = []
+    fixed: set[int] = set()
     for i, t in enumerate(texts):
+        p = _point_at(points, i)
+        if p is not None:
+            found.append(p.as_geocode(t))
+            fixed.add(i)
+            continue
         try:
             found.append(geocode_one(t, providers, session, city_hint, area_fallback=area_fallback))
         except GeocodeError as exc:
             found.append(None)
             unverified.append(UnverifiedStop(kind=_kind(i, n), input_text=t, reason=exc.message,
                                              error_code=str(exc.code)))
-    _reject_outliers(texts, found, unverified, n)
+    _reject_outliers(texts, found, unverified, n, frozenset(fixed))
     # Dropping a stop can leave two identical ones next to each other — "A, B, A" loses B and becomes
     # "A, A", which is not a journey and which analyse_route rightly refuses. Itineraries also arrive with
     # the same place written twice ("Pondicherry" then "Puducherry"). Collapse those here, by position

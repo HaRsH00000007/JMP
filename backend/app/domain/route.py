@@ -23,6 +23,28 @@ class GeocodeResult(BaseModel):
     candidates: list[dict[str, Any]] = Field(default_factory=list)  # for GEOCODE_AMBIGUOUS responses
 
 
+# Provider name recorded on a stop whose coordinates came with the request (an app's place picker), not
+# from a geocoder.
+SUPPLIED_PROVIDER = "frontend"
+
+
+class SuppliedPoint(BaseModel):
+    """A stop's position chosen by the requester (a place picker), used as-is instead of geocoding its text.
+
+    state/district come from the same picker when it has them; they feed the seasonal, hilly-region and
+    region-label rules that a geocoder would otherwise have supplied.
+    """
+
+    lat: float
+    lng: float
+    state: str | None = None
+    district: str | None = None
+
+    def as_geocode(self, text: str) -> GeocodeResult:
+        return GeocodeResult(query=text, name=text, lat=self.lat, lng=self.lng, state=self.state,
+                             district=self.district, confidence=1.0, provider=SUPPLIED_PROVIDER)
+
+
 class RoadSpan(BaseModel):
     """A stretch of a leg on one road, in metres from the start of the leg."""
 

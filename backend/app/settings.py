@@ -150,6 +150,11 @@ class Settings(BaseSettings):
     # of a batch started on an earlier day is delivered alongside the documents already produced. Empty =
     # group by the run date, which is what you want normally.
     output_folder: str = ""
+    # How a document's file is named, e.g. "{route_id}- {manager}- {city}". Placeholders: route_id, code,
+    # manager, city, id. Empty keeps "<route id>_<journey code>_<id>", which cannot collide. A template
+    # without {id} or {code} can: same route id, manager and city means one filename, and a second document
+    # overwrites the first.
+    document_filename_template: str = ""
 
     @property
     def cors_origins(self) -> list[str]:
