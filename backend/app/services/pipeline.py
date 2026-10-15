@@ -13,6 +13,7 @@ from datetime import date
 from sqlalchemy.orm import Session
 
 from app.domain.facts import JourneyFacts, UnverifiedStop, VerificationItem
+from app.domain.route import SuppliedPoint
 from app.llm.schemas import NarrativeV1
 from app.providers.registry import Providers
 from app.rendering.html_renderer import render_html
@@ -42,18 +43,19 @@ class JourneyOptions:
 
 def compute_facts(inputs: list[str], opts: JourneyOptions, providers: Providers, library: HazardLibrary,
                   session: Session | None = None, geocoded: list | None = None,
-                  allow_unverified_stops: bool | None = None) -> JourneyFacts:
+                  allow_unverified_stops: bool | None = None,
+                  points: list[SuppliedPoint | None] | None = None) -> JourneyFacts:
     unverified: list[UnverifiedStop] = []
     collapsed: list[str] = []
     itinerary = full_itinerary(inputs)
     if geocoded is None:
         if allow_unverified_stops if allow_unverified_stops is not None else settings().allow_unverified_stops:
             best = geocode_best_effort(inputs, providers, session, opts.city_hint,
-                                       area_fallback=settings().area_level_fallback)
+                                       area_fallback=settings().area_level_fallback, points=points)
             inputs, geocoded, unverified = best.texts, best.located, best.unverified
             collapsed, itinerary = best.collapsed, best.itinerary
         else:
-            geocoded = geocode_all(inputs, providers, session, opts.city_hint)
+            geocoded = geocode_all(inputs, providers, session, opts.city_hint, points=points)
     facts, route, fs, elev = analyse_route(
         inputs=inputs, geocoded=geocoded, providers=providers, vehicle_type=opts.vehicle_type,
         vehicle_type_specified=opts.vehicle_type_specified, travel_date=opts.travel_date,

@@ -11,6 +11,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
+from app.domain.route import SuppliedPoint
 from app.errors import InputValidationError
 from app.settings import settings
 
@@ -20,6 +21,35 @@ _TIME = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
 def _clean(s: str) -> str:
     return _WS.sub(" ", s or "").strip()
+
+
+class LocationPoint(BaseModel):
+    """Coordinates the requester already has for a stop (an app's place picker). When given, the stop is
+    routed from exactly here and its text is never geocoded. Both lat and lng are required together."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    lat: float = Field(ge=-90, le=90, allow_inf_nan=False)
+    lng: float = Field(ge=-180, le=180, allow_inf_nan=False)
+    # From the same picker when it has them; they drive the seasonal and regional rules for this stop.
+    state: str | None = Field(default=None, max_length=100)
+    district: str | None = Field(default=None, max_length=100)
+
+    @field_validator("lat", "lng", mode="before")
+    @classmethod
+    def _numeric(cls, v: Any) -> Any:
+        # A coordinate is a number. "30.64" or true would be coerced by default; refuse them instead.
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            raise ValueError("must be a number")
+        return v
+
+    @field_validator("state", "district", mode="before")
+    @classmethod
+    def _blank(cls, v: Any) -> Any:
+        return (_clean(v) or None) if isinstance(v, str) else v
+
+    def to_supplied(self) -> SuppliedPoint:
+        return SuppliedPoint(lat=self.lat, lng=self.lng, state=self.state, district=self.district)
 
 
 class JourneyRequest(BaseModel):
@@ -39,6 +69,11 @@ class JourneyRequest(BaseModel):
     # document always prints the stop exactly as submitted, never the hinted query.
     city: str | None = Field(default=None, max_length=100)
     idempotency_key: str | None = Field(default=None, max_length=128)
+    # Optional coordinates per location, aligned with start_location / stops / end_location. A stop with a
+    # point is routed from it directly; a stop without one is geocoded as before.
+    start_point: LocationPoint | None = None
+    stop_points: list[LocationPoint | None] | None = None
+    end_point: LocationPoint | None = None
 
     @field_validator("start_location", "end_location", mode="before")
     @classmethod
@@ -91,6 +126,9 @@ class JourneyRequest(BaseModel):
                 raise ValueError(f"stops[{i}] is empty")
             if len(st) < 3 or len(st) > 300:
                 raise ValueError(f"stops[{i}] must be 3–300 characters")
+        if self.stop_points is not None and len(self.stop_points) != len(self.stops):
+            raise ValueError(f"stop_points must have one entry (or null) per stop: {len(self.stops)} expected, "
+                             f"{len(self.stop_points)} given")
         seq = [self.start_location, *self.stops, self.end_location]
         # With unverified stops allowed, a repeated stop is kept as submitted: the route collapses it to one
         # point and the document still lists it twice, as the itinerary was written.
@@ -103,6 +141,15 @@ class JourneyRequest(BaseModel):
     @property
     def locations(self) -> list[str]:
         return [self.start_location, *self.stops, self.end_location]
+
+    @property
+    def points(self) -> list[SuppliedPoint | None] | None:
+        """Supplied coordinates aligned with `locations`, or None when the request carries none."""
+        stop_points = self.stop_points or [None] * len(self.stops)
+        raw = [self.start_point, *stop_points, self.end_point]
+        if all(p is None for p in raw):
+            return None
+        return [p.to_supplied() if p is not None else None for p in raw]
 
     @property
     def is_round_trip_text(self) -> bool:

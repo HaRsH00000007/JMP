@@ -24,9 +24,21 @@ Auth: bearer token (JWT or SSO-issued), role-checked per route. → [DECISION D-
   "manager_name": "…",                        // optional, from Excel Header sheet → PROVIDED
   "emergency_contact": "…",                   // optional → PROVIDED
   "nearest_hospital": "…", "nearest_police": "…",   // optional → PROVIDED (else REQUIRES VERIFICATION)
-  "idempotency_key": "…"                      // optional; same key within 24h returns the same job
+  "idempotency_key": "…",                     // optional; same key within 24h returns the same job
+
+  // optional, per location: coordinates the requester already has (an app's place picker).
+  // A location with a point is routed from it as-is and is NOT geocoded (no OSM / Google call);
+  // a location without one is geocoded as before. stop_points has one entry (or null) per stop.
+  "start_point": { "lat": 30.6425, "lng": 76.8173, "state": "Punjab", "district": "SAS Nagar (Mohali)" },
+  "stop_points": [ null, { "lat": 30.5972, "lng": 76.8428 } ],
+  "end_point":   { "lat": 30.486, "lng": 76.796, "state": "Punjab" }
 }
 ```
+
+Points: `lat` −90…90 and `lng` −180…180, JSON numbers (strings and booleans are refused), both required
+together. `state`/`district` are optional but feed the seasonal, hilly-region and region-label rules a
+geocoder would otherwise supply. A supplied point is recorded with `geocode_provider: "frontend"` and
+confidence 1.0, and is never dropped by the stop-separation outlier check.
 
 Validation (synchronous, pure):
 

@@ -42,13 +42,14 @@ from app.db.models import (
 )
 from app.db.session import session_scope
 from app.domain.facts import JourneyFacts
+from app.domain.route import SuppliedPoint
 from app.errors import ErrorCode, JmpError, NotFoundError
 from app.llm.pricing import cost_usd, usd_to_inr
 from app.llm.schemas import NarrativeV1
 from app.llm.service import AttemptRecord, generate_narrative
 from app.observability.logging import get_logger
 from app.providers.registry import get_providers
-from app.schemas.journeys import JourneyRequest
+from app.schemas.journeys import JourneyRequest, LocationPoint
 from app.services import hazard_library, text_only
 from app.services.pipeline import JourneyOptions, build_report, compute_facts, render_document
 from app.services.route_service import TooFewLocatedStops
@@ -219,6 +220,32 @@ def fs_safe(text: str) -> str:
     return "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in text)[:60]
 
 
+def _name_part(text: str) -> str:
+    """A filename fragment that keeps spaces readable but drops what a filesystem objects to."""
+    cleaned = "".join(ch for ch in text if ch.isalnum() or ch in " -_.&()").strip(" .")
+    return " ".join(cleaned.split())[:60]
+
+
+def document_stem(route_ref: str | None, code: str, manager: str, city: str, doc_id: uuid.UUID) -> str:
+    """The filename a document is stored under, without its extension.
+
+    DOCUMENT_FILENAME_TEMPLATE lets a delivery choose how its files read — recipients sort and search these
+    by eye, so "R001- A Patel- mumbai" is worth more to them than a journey code and a hash. Empty (the
+    default) keeps "<route id>_<journey code>_<id>", which is unique by construction.
+
+    A template naming neither the id nor the journey code can collide: two rows with the same route id,
+    manager and city produce one filename and the second overwrites the first. That is usually what a
+    re-run wants and is why it is not prevented, but it is the reason the default keeps the id.
+    """
+    template = settings().document_filename_template.strip()
+    if not template:
+        return f"{fs_safe(route_ref)}_{code}_{doc_id.hex[:8]}" if route_ref else f"{code}_{doc_id.hex[:8]}"
+    stem = template.format(route_id=_name_part(route_ref or ""), code=code, manager=_name_part(manager),
+                           city=_name_part(city), id=doc_id.hex[:8])
+    stem = " ".join(stem.split()).strip(" -_.")
+    return stem or f"{code}_{doc_id.hex[:8]}"
+
+
 def bulk_route_ref(db: Session, journey_id: uuid.UUID) -> str | None:
     """The route_id of the uploaded CSV row this journey came from, or None if it was generated individually."""
     item_id = db.scalar(select(Journey.bulk_job_item_id).where(Journey.id == journey_id))
@@ -244,6 +271,17 @@ def _assign_code(db: Session, journey: Journey, state: str | None) -> str:
     return journey.journey_code
 
 
+def _supplied_points(inp: dict[str, Any], n: int) -> list[SuppliedPoint | None] | None:
+    """Coordinates the request carried for its stops (start_point / stop_points / end_point), aligned with
+    the stops; None when it carried none, so every stop is geocoded as before."""
+    if not any(inp.get(k) for k in ("start_point", "stop_points", "end_point")):
+        return None
+    raw = [inp.get("start_point"), *(inp.get("stop_points") or [None] * (n - 2)), inp.get("end_point")]
+    if len(raw) != n:
+        return None
+    return [LocationPoint.model_validate(p).to_supplied() if p else None for p in raw]
+
+
 def stage_analyse(job_id: uuid.UUID, attempt: int = 1) -> str | None:
     with session_scope() as db:
         job = _begin(db, job_id, JobStage.analyse, attempt)
@@ -252,13 +290,14 @@ def stage_analyse(job_id: uuid.UUID, attempt: int = 1) -> str | None:
         journey = db.get(Journey, job.journey_id)
         assert journey is not None
         inputs = [s.raw_text for s in sorted(journey.stops, key=lambda s: s.seq)]
+        points = _supplied_points(journey.input or {}, len(inputs))
         opts = _options(journey)
         library = hazard_library.load_active_library(db)
     providers = get_providers()
     too_few: TooFewLocatedStops | None = None
     with session_scope() as db:  # provider cache writes in their own transaction
         try:
-            jf = compute_facts(inputs, opts, providers, library, db)
+            jf = compute_facts(inputs, opts, providers, library, db, points=points)
         except TooFewLocatedStops as exc:
             if not settings().text_only_fallback:
                 raise
@@ -434,6 +473,8 @@ def stage_render(job_id: uuid.UUID, attempt: int = 1) -> str | None:
         # A bulk document is named after its CSV row as well as its journey code, so a delivered folder can
         # be reconciled against the uploaded sheet row by row (and a missing row is visible as a gap).
         route_ref = db.get(BulkJobItem, item_id).route_ref if item_id else None
+        manager = journey.manager_name or ""
+        city = str((journey.input or {}).get("city") or "")
     versions = current_versions(jf.hazard_library_version)
     report = build_report(jf, narrative, journey_code=code, versions=versions, narrative_source=source, model=model,
                           pointer_count=settings().hazard_pointer_count)
@@ -442,8 +483,7 @@ def stage_render(job_id: uuid.UUID, attempt: int = 1) -> str | None:
     doc_id = uuid.uuid4()
     now = utcnow()
     storage = get_storage()
-    stem = f"{fs_safe(route_ref)}_{code}" if route_ref else code
-    base = f"documents/{date_prefix(now)}/{stem}_{doc_id.hex[:8]}"
+    base = f"documents/{date_prefix(now)}/{document_stem(route_ref, code, manager, city, doc_id)}"
     html_key = storage.put_bytes(html_key_for(base), html.encode("utf-8"), "text/html; charset=utf-8")
     pdf_key = storage.put_bytes(base + ".pdf", pdf.pdf, "application/pdf")
     total_ms = int((time.monotonic() - t0) * 1000)
